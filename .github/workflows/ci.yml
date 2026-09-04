@@ -62,13 +62,18 @@ jobs:
 
           curl -sf "$base/" >/dev/null
 
-          created=$(curl -sf -X POST "$base/api/games")
+          created=$(curl -sf -X POST -d 'name=Ada+Lovelace' "$base/api/games")
           id=$(jq -er .id <<<"$created")
           creator_token=$(jq -er .token <<<"$created")
           creator_color=$(jq -er .color <<<"$created")
 
-          joined=$(curl -sf -X POST "$base/api/games/$id/join")
+          joined=$(curl -sf -X POST -d 'name=Konrad+Ha%C5%82as' "$base/api/games/$id/join")
           joiner_token=$(jq -er .token <<<"$joined")
+
+          # Both names survive the round trip, including the percent-encoded one.
+          names=$(curl -sf "$base/api/games/$id")
+          test "$(jq -er '[.blackName, .whiteName] | sort | join("/")' <<<"$names")" \
+            = "Ada Lovelace/Konrad Hałas"
 
           if [ "$creator_color" = 1 ]; then
             black=$creator_token

@@ -55,4 +55,4 @@ verify mintToken
 
 verify find
     find(empty("a", "b"), "nope") => Option.None
-    find(put(empty("a", "b"), "x", Go.Game.newGame("t", 1)), "x") => Option.Some(Go.Game.newGame("t", 1))
+    find(put(empty("a", "b"), "x", Go.Game.newGame("t", 1, "Ada")), "x") => Option.Some(Go.Game.newGame("t", 1, "Ada"))

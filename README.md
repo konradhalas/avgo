@@ -8,10 +8,10 @@
 
 A two-player game of Go over the web, written in [Aver](https://averlang.dev/).
 
-Open the site, press **Create game**, send the link you get to one other person.
-When they press **Join game**, play starts. Colours are drawn at random, the
-board is 9×9, and every game lives in memory only — restarting the server
-forgets them all.
+Open the site, enter your name and press **Create game**, then send the link
+you get to one other person. They enter their own name, press **Join game**,
+and play starts. Colours are drawn at random, the board is 9×9, and every game
+lives in memory only — restarting the server forgets them all.
 
 ![The board five moves in: black on tengen and two star points, white on two more](docs/screenshot.jpg)
 
@@ -81,8 +81,8 @@ header.
 
 | Endpoint | Meaning |
 |---|---|
-| `POST /api/games` | Create a game. Returns `id`, `token`, `color` |
-| `POST /api/games/{id}/join` | Take the open seat. Returns `token`, `color` |
+| `POST /api/games` | Create a game. Body `name=<player>`. Returns `id`, `token`, `color` |
+| `POST /api/games/{id}/join` | Take the open seat. Body `name=<player>`. Returns `token`, `color` |
 | `GET /api/games/{id}` | Current state, including `you` for the caller |
 | `POST /api/games/{id}/move` | Body `idx=<0..80>` or `pass=true` |
 

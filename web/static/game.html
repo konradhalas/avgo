@@ -26,6 +26,22 @@
   }
   button[disabled] { opacity: .4; cursor: default; }
   .score { font-variant-numeric: tabular-nums; opacity: .8; font-size: .95rem; }
+  .players { display: flex; gap: 1.6rem; flex-wrap: wrap; justify-content: center; }
+  .seat { display: inline-flex; align-items: center; gap: .45rem; opacity: .5; }
+  .seat.turn { opacity: 1; }
+  .seat .stone {
+    width: .85rem; height: .85rem; border-radius: 50%;
+    background: #141414; border: 1px solid var(--ink); display: inline-block;
+  }
+  .seat.white .stone { background: #fbfbf7; }
+  .seat.open .name { font-style: italic; }
+  .seat .mine { opacity: .6; }
+  form.row input {
+    font: inherit; padding: .5rem; border-radius: .5rem;
+    border: 1px solid currentColor; background: transparent; color: inherit;
+    width: min(14rem, 55vw);
+  }
+  form.row input::placeholder { color: currentColor; opacity: .45; }
   .error { color: #b3261e; min-height: 1.5em; text-align: center; }
   .invite { display: flex; gap: .5rem; align-items: center; }
   .invite input {
@@ -36,6 +52,10 @@
 </head>
 <body>
   <h1 id="heading">Go</h1>
+  <div class="players" id="players" hidden>
+    <span class="seat" id="seatBlack"><i class="stone"></i><b class="name"></b><span class="mine"></span></span>
+    <span class="seat white" id="seatWhite"><i class="stone"></i><b class="name"></b><span class="mine"></span></span>
+  </div>
   <p id="status">Loading&hellip;</p>
   <canvas id="board" width="560" height="560"></canvas>
   <div class="row">
@@ -48,7 +68,10 @@
       <button id="copy">Copy link</button>
     </span>
   </div>
-  <div class="row"><button id="join" hidden>Join game</button></div>
+  <form class="row" id="joinForm" hidden>
+    <input id="joinName" maxlength="24" required autocomplete="nickname" placeholder="Your name">
+    <button type="submit">Join game</button>
+  </form>
   <p class="error" id="error"></p>
 
 <script>
@@ -62,7 +85,11 @@
   const scoreLine = document.getElementById('score');
   const errorLine = document.getElementById('error');
   const passButton = document.getElementById('pass');
-  const joinButton = document.getElementById('join');
+  const joinForm = document.getElementById('joinForm');
+  const joinName = document.getElementById('joinName');
+  const joinButton = joinForm.querySelector('button');
+  const players = document.getElementById('players');
+  const seats = { 1: document.getElementById('seatBlack'), 2: document.getElementById('seatWhite') };
   const inviteRow = document.getElementById('inviteRow');
   const inviteField = document.getElementById('invite');
 
@@ -190,21 +217,24 @@
     const you = state.you;
     const yourTurn = state.status === 'playing' && you !== 0 && you === state.turn;
 
-    document.getElementById('heading').textContent =
-      you === 0 ? 'Go — watching' : 'Go — you are ' + colorName(you);
+    players.hidden = false;
+    seat(1, state.blackName);
+    seat(2, state.whiteName);
 
     if (state.status === 'waiting') {
-      statusLine.textContent = you === 0
-        ? 'This game is waiting for players.'
-        : 'Waiting for the other player to join.';
+      say(you === 0
+        ? 'This game is waiting for a second player.'
+        : 'Waiting for the other player to join.');
     } else if (state.status === 'finished') {
       const black = state.blackScore, white = state.whiteScore;
-      const verdict = black === white ? 'A draw.' : (black > white ? 'Black wins.' : 'White wins.');
-      statusLine.innerHTML = '<b>Game over.</b> ' + verdict;
+      const verdict = black === white
+        ? 'A draw.'
+        : (black > white ? state.blackName : state.whiteName) + ' wins.';
+      say(verdict, 'Game over.');
+    } else if (yourTurn) {
+      say('', 'Your move.');
     } else {
-      statusLine.innerHTML = yourTurn
-        ? '<b>Your move.</b>'
-        : colorName(state.turn) + ' to play.';
+      say(nameOf(state.turn) + ' to play.');
     }
 
     scoreLine.textContent = state.status === 'finished'
@@ -213,9 +243,33 @@
         ' · move ' + state.moves;
 
     passButton.disabled = !yourTurn;
-    joinButton.hidden = !(state.status === 'waiting' && you === 0);
+    joinForm.hidden = !(state.status === 'waiting' && you === 0);
     inviteRow.hidden = !(state.status === 'waiting' && you !== 0);
     inviteField.value = location.href;
+  }
+
+  function nameOf(color) {
+    return (color === 1 ? state.blackName : state.whiteName) || colorName(color);
+  }
+
+  function seat(color, name) {
+    // Names come from other people, so they are written as text, never as markup.
+    const el = seats[color];
+    el.querySelector('.name').textContent = name || 'open seat';
+    el.querySelector('.mine').textContent = state.you === color ? '(you)' : '';
+    el.classList.toggle('turn', state.status === 'playing' && state.turn === color);
+    el.classList.toggle('open', !name);
+  }
+
+  function say(text, lead) {
+    statusLine.textContent = '';
+    if (lead) {
+      const strong = document.createElement('b');
+      strong.textContent = lead;
+      statusLine.append(strong, text ? ' ' + text : '');
+    } else {
+      statusLine.textContent = text;
+    }
   }
 
   async function call(path, options) {
@@ -262,11 +316,16 @@
 
   passButton.addEventListener('click', () => send('pass=true'));
 
-  joinButton.addEventListener('click', async () => {
+  joinForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
     joinButton.disabled = true;
     try {
-      const seat = await call('/api/games/' + gameId + '/join', { method: 'POST', headers: headers() });
-      token = seat.token;
+      const taken = await call('/api/games/' + gameId + '/join', {
+        method: 'POST',
+        headers: { ...headers(), 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'name=' + encodeURIComponent(joinName.value),
+      });
+      token = taken.token;
       localStorage.setItem(storageKey, token);
       await poll();
     } catch (failure) {

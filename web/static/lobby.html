@@ -24,6 +24,13 @@
   }
   button:hover { background: var(--ink); color: var(--paper); }
   button[disabled] { opacity: .5; cursor: progress; }
+  form { display: flex; gap: .6rem; justify-content: center; flex-wrap: wrap; }
+  input {
+    font: inherit; padding: .8rem 1rem; border-radius: .6rem;
+    border: 1px solid var(--ink); background: transparent; color: var(--ink);
+    width: min(16rem, 60vw);
+  }
+  input::placeholder { color: var(--ink); opacity: .45; }
   .error { margin-top: 1rem; color: #b3261e; min-height: 1.5em; }
 </style>
 </head>
@@ -31,18 +38,29 @@
 <main>
   <h1>Go</h1>
   <p class="lead">9&times;9. Create a game, send the link to one other person, and play.</p>
-  <button id="create">Create game</button>
+  <form id="create">
+    <input id="name" name="name" maxlength="24" required autocomplete="nickname"
+           autofocus placeholder="Your name">
+    <button type="submit">Create game</button>
+  </form>
   <p class="error" id="error"></p>
 </main>
 <script>
-  const button = document.getElementById('create');
+  const form = document.getElementById('create');
+  const nameField = document.getElementById('name');
+  const button = form.querySelector('button');
   const error = document.getElementById('error');
 
-  button.addEventListener('click', async () => {
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
     button.disabled = true;
     error.textContent = '';
     try {
-      const response = await fetch('/api/games', { method: 'POST' });
+      const response = await fetch('/api/games', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'name=' + encodeURIComponent(nameField.value),
+      });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'could not create the game');
       localStorage.setItem('avgo:' + data.id, data.token);

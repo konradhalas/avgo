@@ -2,7 +2,7 @@ module Router
     intent =
         "The whole HTTP surface as one pure function: a store and a request in, a new store and a response out."
         "Keeping routing pure means every endpoint is directly verifiable without a socket."
-    depends [Go.Game, Go.Board, Web.Store]
+    depends [Go.Game, Go.Board, Web.Store, Bytes]
     exposes [Reply, handle]
     effects []
 
@@ -42,7 +42,7 @@ fn games(store: Store, entropy: Int, request: HttpRequest, segments: List<String
     ? "POST /api/games creates a game; anything deeper addresses one existing game."
     match segments
         [] -> match request.method == "POST"
-            true -> create(store, entropy)
+            true -> create(store, entropy, request)
             false -> refuse(store, 405, "use POST to create a game")
         [id, ..rest] -> game(store, entropy, request, id, rest)
 
@@ -65,27 +65,27 @@ fn act(store: Store, entropy: Int, request: HttpRequest, id: String, action: Str
     ? "Dispatches the resolved game to the endpoint that was asked for."
     match action
         "state" -> stateReply(store, id, found, playerToken)
-        "join" -> joinReply(store, entropy, id, found, playerToken)
+        "join" -> joinReply(store, entropy, id, found, playerToken, request)
         "move" -> moveReply(store, id, found, playerToken, request)
         _ -> notFound(store)
 
-fn create(store: Store, entropy: Int) -> Reply
-    ? "Mints an id, a creator token and a drawn colour, and remembers the new game."
-    minted(store, Web.Store.mintId(entropy, store.counter), Web.Store.mintToken(entropy, store.counter), Web.Store.drawColor(entropy, store.counter))
+fn create(store: Store, entropy: Int, request: HttpRequest) -> Reply
+    ? "Mints an id, a creator token and a drawn colour, and seats the creator under the name they gave."
+    minted(store, Web.Store.mintId(entropy, store.counter), Web.Store.mintToken(entropy, store.counter), Web.Store.drawColor(entropy, store.counter), playerName(request.body))
 
-fn minted(store: Store, id: String, playerToken: String, color: Int) -> Reply
+fn minted(store: Store, id: String, playerToken: String, color: Int, name: String) -> Reply
     ? "The creator is told its id, its secret and its colour; the second seat stays open."
-    Reply(store = Web.Store.put(store, id, Go.Game.newGame(playerToken, color)), response = json(200, "{{\"id\":\"{id}\",\"token\":\"{playerToken}\",\"color\":{color}}}"))
+    Reply(store = Web.Store.put(store, id, Go.Game.newGame(playerToken, color, name)), response = json(200, "{{\"id\":\"{id}\",\"token\":\"{playerToken}\",\"color\":{color}}}"))
 
-fn joinReply(store: Store, entropy: Int, id: String, found: Game, existingToken: String) -> Reply
+fn joinReply(store: Store, entropy: Int, id: String, found: Game, existingToken: String, request: HttpRequest) -> Reply
     ? "A browser already holding a seat re-joins as itself instead of taking the last seat twice."
     match Go.Game.colorOf(found, existingToken) == 0
         false -> seated(store, existingToken, Go.Game.colorOf(found, existingToken))
-        true -> joinFresh(store, id, found, Web.Store.mintToken(entropy, store.counter))
+        true -> joinFresh(store, id, found, Web.Store.mintToken(entropy, store.counter), playerName(request.body))
 
-fn joinFresh(store: Store, id: String, found: Game, playerToken: String) -> Reply
+fn joinFresh(store: Store, id: String, found: Game, playerToken: String, name: String) -> Reply
     ? "Takes the open seat, or reports that both seats are gone."
-    match Go.Game.join(found, playerToken)
+    match Go.Game.join(found, playerToken, name)
         Result.Err(reason) -> refuse(store, 409, reason)
         Result.Ok(joined) -> seated(Web.Store.put(store, id, joined), playerToken, Go.Game.colorOf(joined, playerToken))
 
@@ -117,7 +117,7 @@ fn stateReply(store: Store, id: String, found: Game, playerToken: String) -> Rep
 
 fn stateJson(id: String, found: Game, playerToken: String) -> String
     ? "Everything a client needs to draw the board and know what it may do."
-    "{{\"id\":\"{id}\",\"status\":\"{Go.Game.status(found)}\",\"board\":\"{Go.Board.render(found.board)}\",\"turn\":{found.turn},\"you\":{Go.Game.colorOf(found, playerToken)},\"capturedByBlack\":{found.capturedByBlack},\"capturedByWhite\":{found.capturedByWhite},\"passes\":{found.passes},\"moves\":{found.moves},\"finished\":{String.fromBool(found.finished)},\"blackScore\":{Go.Game.blackScore(found)},\"whiteScore\":{Go.Game.whiteScore(found)}}}"
+    "{{\"id\":\"{id}\",\"status\":\"{Go.Game.status(found)}\",\"blackName\":\"{found.blackName}\",\"whiteName\":\"{found.whiteName}\",\"board\":\"{Go.Board.render(found.board)}\",\"turn\":{found.turn},\"you\":{Go.Game.colorOf(found, playerToken)},\"capturedByBlack\":{found.capturedByBlack},\"capturedByWhite\":{found.capturedByWhite},\"passes\":{found.passes},\"moves\":{found.moves},\"finished\":{String.fromBool(found.finished)},\"blackScore\":{Go.Game.blackScore(found)},\"whiteScore\":{Go.Game.whiteScore(found)}}}"
 
 fn token(incoming: HttpRequest) -> String
     ? "The caller's secret. It travels in a header so that reads and writes carry it the same way."
@@ -138,6 +138,63 @@ fn firstNonEmpty(primary: String, fallback: String) -> String
     match primary == ""
         true -> fallback
         false -> primary
+
+fn playerName(body: String) -> String
+    ? "The display name from a request body: decoded, stripped of what would break the state document, and bounded."
+    boundedName(String.trim(safeName(decode(formValue(body, "name")))))
+
+fn safeName(raw: String) -> String
+    ? "A quote or a backslash would break the JSON the browser polls; a newline or a tab would break the line it is shown on."
+    String.replace(String.replace(String.replace(String.replace(String.replace(raw, "\\", ""), "\"", ""), "\n", " "), "\r", " "), "\t", " ")
+
+fn boundedName(trimmed: String) -> String
+    ? "An empty name still has to render as something, and a very long one must not push the board off the page."
+    match trimmed == ""
+        true -> "Anonymous"
+        false -> String.slice(trimmed, 0, 24)
+
+fn decode(value: String) -> String
+    ? "Percent-decodes one form field. Input that is not valid encoding is used exactly as it arrived."
+    Result.withDefault(decoded(Bytes.octets(String.toUtf8(value)), []), value)
+
+fn decoded(octets: List<Int>, acc: List<Int>) -> Result<String, String>
+    ? "Walks the field one octet at a time, so a multi-byte character survives being split across escapes."
+    match octets
+        [] -> finish(List.reverse(acc))
+        [first, ..rest] -> match first
+            37 -> hexPair(rest, acc)
+            43 -> decoded(rest, List.prepend(32, acc))
+            _ -> decoded(rest, List.prepend(first, acc))
+
+fn hexPair(rest: List<Int>, acc: List<Int>) -> Result<String, String>
+    ? "A percent sign must be followed by two hex digits."
+    match rest
+        [] -> Result.Err("truncated percent escape")
+        [hi, ..afterHi] -> match afterHi
+            [] -> Result.Err("truncated percent escape")
+            [lo, ..afterLo] -> withNibbles(afterLo, acc, hexValue(hi), hexValue(lo))
+
+fn withNibbles(rest: List<Int>, acc: List<Int>, hi: Int, lo: Int) -> Result<String, String>
+    ? "Either digit failing to parse makes the whole field undecodable."
+    match Bool.or(hi < 0, lo < 0)
+        true -> Result.Err("invalid percent escape")
+        false -> decoded(rest, List.prepend(hi * 16 + lo, acc))
+
+fn hexValue(octet: Int) -> Int
+    ? "The value of one hex digit, or a negative number when the octet is not one."
+    match Bool.and(octet >= 48, octet <= 57)
+        true -> octet - 48
+        false -> match Bool.and(octet >= 97, octet <= 102)
+            true -> octet - 87
+            false -> match Bool.and(octet >= 65, octet <= 70)
+                true -> octet - 55
+                false -> 0 - 1
+
+fn finish(octets: List<Int>) -> Result<String, String>
+    ? "The decoded octets still have to spell valid UTF-8."
+    match Bytes.fromList(octets)
+        Result.Err(reason) -> Result.Err(reason)
+        Result.Ok(bytes) -> String.fromUtf8(bytes)
 
 fn formValue(source: String, key: String) -> String
     ? "Reads one key out of an `a=1&b=2` string; a missing key reads as empty."
@@ -223,11 +280,11 @@ verify top
 verify api
     statusOf(api(Web.Store.empty("l", "g"), 7, asRequest("GET", "/api", "", ""), [])) => 404
     statusOf(api(Web.Store.empty("l", "g"), 7, asRequest("GET", "/api/x", "", ""), ["x"])) => 404
-    statusOf(api(Web.Store.empty("l", "g"), 7, asRequest("POST", "/api/games", "", ""), ["games"])) => 200
+    statusOf(api(Web.Store.empty("l", "g"), 7, asRequest("POST", "/api/games", "", "name=Ada"), ["games"])) => 200
 
 verify games
     statusOf(games(Web.Store.empty("l", "g"), 7, asRequest("GET", "/api/games", "", ""), [])) => 405
-    statusOf(games(Web.Store.empty("l", "g"), 7, asRequest("POST", "/api/games", "", ""), [])) => 200
+    statusOf(games(Web.Store.empty("l", "g"), 7, asRequest("POST", "/api/games", "", "name=Ada"), [])) => 200
     statusOf(games(Web.Store.empty("l", "g"), 7, asRequest("GET", "/api/games/x", "", ""), ["x"])) => 404
 
 verify game
@@ -237,51 +294,51 @@ verify game
 
 verify withGame
     statusOf(withGame(Web.Store.empty("l", "g"), 7, asRequest("GET", "/api/games/x", "", ""), "x", "state")) => 404
-    statusOf(withGame(Web.Store.put(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1)), 7, withToken(asRequest("GET", "/api/games/x", "", ""), "t"), "x", "state")) => 200
+    statusOf(withGame(Web.Store.put(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1, "Ada")), 7, withToken(asRequest("GET", "/api/games/x", "", ""), "t"), "x", "state")) => 200
 
 verify act
-    statusOf(act(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""), "x", "state", Go.Game.newGame("t", 1), "t")) => 200
-    statusOf(act(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""), "x", "bogus", Go.Game.newGame("t", 1), "t")) => 404
+    statusOf(act(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""), "x", "state", Go.Game.newGame("t", 1, "Ada"), "t")) => 200
+    statusOf(act(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""), "x", "bogus", Go.Game.newGame("t", 1, "Ada"), "t")) => 404
 
 verify create
-    statusOf(create(Web.Store.empty("l", "g"), 7)) => 200
-    Map.len(create(Web.Store.empty("l", "g"), 7).store.games) => 1
+    statusOf(create(Web.Store.empty("l", "g"), 7, asRequest("POST", "/api/games", "", "name=Ada"))) => 200
+    Map.len(create(Web.Store.empty("l", "g"), 7, asRequest("POST", "/api/games", "", "name=Ada")).store.games) => 1
 
 verify minted
-    Map.len(minted(Web.Store.empty("l", "g"), "id1", "tok", 1).store.games) => 1
-    minted(Web.Store.empty("l", "g"), "id1", "tok", 1).response.body => "{{\"id\":\"id1\",\"token\":\"tok\",\"color\":1}}"
+    Map.len(minted(Web.Store.empty("l", "g"), "id1", "tok", 1, "Ada").store.games) => 1
+    minted(Web.Store.empty("l", "g"), "id1", "tok", 1, "Ada").response.body => "{{\"id\":\"id1\",\"token\":\"tok\",\"color\":1}}"
 
 verify joinReply
-    statusOf(joinReply(Web.Store.empty("l", "g"), 7, "x", Go.Game.newGame("t", 1), "t")) => 200
-    statusOf(joinReply(Web.Store.empty("l", "g"), 7, "x", Go.Game.newGame("t", 1), "")) => 200
+    statusOf(joinReply(Web.Store.empty("l", "g"), 7, "x", Go.Game.newGame("t", 1, "Ada"), "t", asRequest("POST", "/", "", "name=Bo"))) => 200
+    statusOf(joinReply(Web.Store.empty("l", "g"), 7, "x", Go.Game.newGame("t", 1, "Ada"), "", asRequest("POST", "/", "", "name=Bo"))) => 200
 
 verify joinFresh
-    statusOf(joinFresh(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1), "u")) => 200
-    statusOf(joinFresh(Web.Store.empty("l", "g"), "x", Result.withDefault(Go.Game.join(Go.Game.newGame("t", 1), "u"), Go.Game.newGame("t", 1)), "v")) => 409
+    statusOf(joinFresh(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1, "Ada"), "u", "Bo")) => 200
+    statusOf(joinFresh(Web.Store.empty("l", "g"), "x", Result.withDefault(Go.Game.join(Go.Game.newGame("t", 1, "Ada"), "u", "Bo"), Go.Game.newGame("t", 1, "Ada")), "v", "Cy")) => 409
 
 verify seated
     statusOf(seated(Web.Store.empty("l", "g"), "tok", 2)) => 200
     seated(Web.Store.empty("l", "g"), "tok", 2).response.body => "{{\"token\":\"tok\",\"color\":2}}"
 
 verify moveReply
-    statusOf(moveReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1), "t", asRequest("POST", "/", "", "idx=0"))) => 409
-    statusOf(moveReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1), "t", asRequest("POST", "/", "", "pass=true"))) => 409
-    statusOf(moveReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1), "t", asRequest("POST", "/", "", "idx=zz"))) => 400
+    statusOf(moveReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1, "Ada"), "t", asRequest("POST", "/", "", "idx=0"))) => 409
+    statusOf(moveReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1, "Ada"), "t", asRequest("POST", "/", "", "pass=true"))) => 409
+    statusOf(moveReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1, "Ada"), "t", asRequest("POST", "/", "", "idx=zz"))) => 400
 
 verify placed
-    statusOf(placed(Web.Store.empty("l", "g"), "x", "t", Go.Game.newGame("t", 1), Result.Err("bad"))) => 400
-    statusOf(placed(Web.Store.empty("l", "g"), "x", "t", Go.Game.newGame("t", 1), Result.Ok(0))) => 409
+    statusOf(placed(Web.Store.empty("l", "g"), "x", "t", Go.Game.newGame("t", 1, "Ada"), Result.Err("bad"))) => 400
+    statusOf(placed(Web.Store.empty("l", "g"), "x", "t", Go.Game.newGame("t", 1, "Ada"), Result.Ok(0))) => 409
 
 verify applied
     statusOf(applied(Web.Store.empty("l", "g"), "x", "t", Result.Err("nope"))) => 409
-    statusOf(applied(Web.Store.empty("l", "g"), "x", "t", Result.Ok(Go.Game.newGame("t", 1)))) => 200
+    statusOf(applied(Web.Store.empty("l", "g"), "x", "t", Result.Ok(Go.Game.newGame("t", 1, "Ada")))) => 200
 
 verify stateReply
-    statusOf(stateReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1), "t")) => 200
+    statusOf(stateReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1, "Ada"), "t")) => 200
 
 verify stateJson
-    String.startsWith(stateJson("x", Go.Game.newGame("t", 1), "t"), "{{\"id\":\"x\",\"status\":\"waiting\"") => true
-    String.contains(stateJson("x", Go.Game.newGame("t", 1), "t"), "\"you\":1") => true
+    String.startsWith(stateJson("x", Go.Game.newGame("t", 1, "Ada"), "t"), "{{\"id\":\"x\",\"status\":\"waiting\"") => true
+    String.contains(stateJson("x", Go.Game.newGame("t", 1, "Ada"), "t"), "\"you\":1") => true
 
 verify token
     token(withToken(asRequest("GET", "/", "", ""), "abc")) => "abc"
@@ -315,3 +372,52 @@ verify json
 
 verify refuse
     statusOf(refuse(Web.Store.empty("l", "g"), 409, "no")) => 409
+
+verify playerName
+    playerName("name=Ada") => "Ada"
+    playerName("name=Ada%20Lovelace") => "Ada Lovelace"
+    playerName("name=Konrad+Ha%C5%82as") => "Konrad Hałas"
+    playerName("name=%20%20") => "Anonymous"
+    playerName("") => "Anonymous"
+
+verify safeName
+    safeName("Ada") => "Ada"
+    safeName("a\"b") => "ab"
+    safeName("a\\b") => "ab"
+    safeName("a\nb") => "a b"
+
+verify boundedName
+    boundedName("") => "Anonymous"
+    boundedName("Ada") => "Ada"
+    boundedName("012345678901234567890123456789") => "012345678901234567890123"
+
+verify decode
+    decode("Ada%20Lovelace") => "Ada Lovelace"
+    decode("Ha%C5%82as") => "Hałas"
+    decode("a+b") => "a b"
+    decode("100%") => "100%"
+
+verify decoded
+    decoded([], []) => Result.Ok("")
+    decoded([65], []) => Result.Ok("A")
+    decoded([37], []) => Result.Err("truncated percent escape")
+
+verify hexPair
+    hexPair([], []) => Result.Err("truncated percent escape")
+    hexPair([50], []) => Result.Err("truncated percent escape")
+    hexPair([50, 48], []) => Result.Ok(" ")
+
+verify withNibbles
+    withNibbles([], [], 0 - 1, 0) => Result.Err("invalid percent escape")
+    withNibbles([], [], 2, 0) => Result.Ok(" ")
+
+verify hexValue
+    hexValue(48) => 0
+    hexValue(57) => 9
+    hexValue(97) => 10
+    hexValue(70) => 15
+    hexValue(122) => 0 - 1
+
+verify finish
+    finish([]) => Result.Ok("")
+    finish([65, 66]) => Result.Ok("AB")

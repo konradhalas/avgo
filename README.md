@@ -13,7 +13,10 @@ you get to one other person. They enter their own name, press **Join game**,
 and play starts. Colours are drawn at random, the board is 9×9, and every game
 lives in memory only — restarting the server forgets them all.
 
-![The board five moves in: black on tengen and two star points, white on two more](docs/screenshot.jpg)
+<p align="center">
+  <img src="docs/screenshot.jpg" width="400"
+       alt="The board five moves in: black on tengen and two star points, white on two more">
+</p>
 
 ## Run it
 

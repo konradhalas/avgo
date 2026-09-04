@@ -19,6 +19,9 @@ const joinButton = joinForm.querySelector('button');
 const inviteRow = document.getElementById('inviteRow');
 const inviteField = document.getElementById('invite');
 const seatsRow = document.getElementById('seats');
+const muteButton = document.getElementById('mute');
+const muteWaves = document.getElementById('muteWaves');
+const muteCross = document.getElementById('muteCross');
 const chatPanel = document.getElementById('chat');
 const chatLog = document.getElementById('chatLog');
 const chatEmpty = document.getElementById('chatEmpty');
@@ -37,6 +40,8 @@ let hovered = -1;
 let lastMoves = null;
 let lastPasses = null;
 let chatShown = '';
+let lastChatAt = null;
+let muted = localStorage.getItem('avgo:muted') === '1';
 
 const headers = () => (token ? { 'x-player-token': token } : {});
 const colorName = (n) => (n === 1 ? 'Black' : n === 2 ? 'White' : 'nobody');
@@ -63,8 +68,29 @@ function unlockAudio() {
 document.addEventListener('pointerdown', unlockAudio);
 document.addEventListener('keydown', unlockAudio);
 
+function showMute() {
+  muteWaves.hidden = muted;
+  muteCross.hidden = !muted;
+  muteButton.setAttribute('aria-pressed', String(muted));
+  const label = muted ? 'Unmute sounds' : 'Mute sounds';
+  muteButton.title = label;
+  muteButton.setAttribute('aria-label', label);
+}
+
+muteButton.addEventListener('click', () => {
+  muted = !muted;
+  localStorage.setItem('avgo:muted', muted ? '1' : '0');
+  showMute();
+});
+
+showMute();
+
+function audible() {
+  return audio && audio.state === 'running' && !muted;
+}
+
 function playStone() {
-  if (!audio || audio.state !== 'running') return;
+  if (!audible()) return;
   const now = audio.currentTime;
 
   const samples = Math.floor(audio.sampleRate * 0.05);
@@ -95,6 +121,29 @@ function playStone() {
   thock.connect(thockGain).connect(audio.destination);
   thock.start(now);
   thock.stop(now + 0.09);
+}
+
+function playChime(incoming) {
+  // Two short tones, a fifth apart: up for a message arriving, down for one
+  // leaving, so you can tell them apart without looking.
+  if (!audible()) return;
+  const now = audio.currentTime;
+  const low = incoming ? 660 : 780;
+  const high = incoming ? 990 : 520;
+
+  const tone = audio.createOscillator();
+  tone.type = 'sine';
+  tone.frequency.setValueAtTime(low, now);
+  tone.frequency.setValueAtTime(high, now + 0.08);
+
+  const level = audio.createGain();
+  level.gain.setValueAtTime(0.0001, now);
+  level.gain.exponentialRampToValueAtTime(0.09, now + 0.012);
+  level.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+
+  tone.connect(level).connect(audio.destination);
+  tone.start(now);
+  tone.stop(now + 0.26);
 }
 
 function soundMoves() {
@@ -253,7 +302,13 @@ function renderChat() {
   const messages = state.messages || [];
   // Rebuilding every second would fight the reader's scroll and selection, so
   // the log is only redrawn when it actually changed.
-  const signature = messages.length + ':' + (messages.length ? messages[messages.length - 1].at : '');
+  const newest = messages.length ? messages[messages.length - 1] : null;
+  if (lastChatAt !== null && newest && newest.at > lastChatAt) {
+    playChime(newest.color !== state.you);
+  }
+  lastChatAt = newest ? newest.at : 0;
+
+  const signature = messages.length + ':' + (newest ? newest.at : '');
   chatPanel.hidden = false;
   chatForm.hidden = state.you === 0;
   chatEmpty.hidden = messages.length > 0;
@@ -307,7 +362,9 @@ function render() {
   } else if (myTurn()) {
     say('', 'Your move.');
   } else {
-    say(nameOf(state.turn) + ' to play.');
+    // Whose turn it is already shows on the seats, so this line says nothing
+    // and collapses out of the way.
+    say('');
   }
 
   scoreLine.textContent = state.status === 'finished'

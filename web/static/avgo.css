@@ -115,7 +115,7 @@ body {
 .table {
   display: flex;
   gap: 1.5rem;
-  align-items: flex-start;
+  align-items: stretch;
   justify-content: center;
   width: 100%;
 }
@@ -133,6 +133,9 @@ body {
 @media (max-width: 62rem) {
   .table { flex-direction: column; align-items: center; }
   .side { width: min(22rem, 100%); }
+  /* Stacked, there is no board height to match, so the log takes a fixed one. */
+  .chat { flex: none; }
+  .chat-log { flex: none; height: 14rem; }
 }
 .row {
   display: flex;
@@ -148,6 +151,7 @@ body {
 .error { color: var(--danger); }
 /* An empty slot would otherwise hold open a gap nobody asked for. */
 .error:empty { display: none; }
+#status:empty { display: none; }
 
 /* ------------------------------------------------------------- controls -- */
 
@@ -189,6 +193,9 @@ body {
 .btn-primary:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); }
 
 .btn:disabled { opacity: .45; cursor: default; }
+
+.btn-icon { padding: .45rem .55rem; display: inline-flex; align-items: center; }
+.btn-icon[aria-pressed="true"] { color: var(--muted); }
 
 /* --------------------------------------------------------------- pieces -- */
 
@@ -276,6 +283,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: .6rem;
+  flex: 1;
+  min-height: 8rem;
   padding: .7rem;
   background: var(--raised);
   border: 1px solid var(--line);
@@ -290,7 +299,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: .25rem;
-  height: 16rem;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
 }

@@ -359,11 +359,9 @@ function render() {
     const black = state.blackScore, white = state.whiteScore;
     say(black === white ? 'A draw.' : (black > white ? state.blackName : state.whiteName) + ' wins.',
         'Game over.');
-  } else if (myTurn()) {
-    say('', 'Your move.');
   } else {
-    // Whose turn it is already shows on the seats, so this line says nothing
-    // and collapses out of the way.
+    // Whose turn it is already shows on the seats. A line here would appear
+    // and vanish every turn, shoving the chat up and down with it.
     say('');
   }
 

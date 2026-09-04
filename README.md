@@ -14,7 +14,7 @@ and play starts. Colours are drawn at random, the board is 9×9, and every game
 lives in memory only — restarting the server forgets them all.
 
 <p align="center">
-  <img src="docs/screenshot.jpg" width="600"
+  <img src="docs/screenshot.jpg" width="620"
        alt="Konrad and Szymon five moves into a game, chatting beside the board">
 </p>
 

@@ -2,12 +2,18 @@
 
 [![CI](https://github.com/konradhalas/avgo/actions/workflows/ci.yml/badge.svg)](https://github.com/konradhalas/avgo/actions/workflows/ci.yml)
 
+> "I can't code in Aver, but I can write prompts with typos"
+>
+> — Konrad Hałas
+
 A two-player game of Go over the web, written in [Aver](https://averlang.dev/).
 
 Open the site, press **Create game**, send the link you get to one other person.
 When they press **Join game**, play starts. Colours are drawn at random, the
 board is 9×9, and every game lives in memory only — restarting the server
 forgets them all.
+
+![The board five moves in: black on tengen and two star points, white on two more](docs/screenshot.jpg)
 
 ## Run it
 

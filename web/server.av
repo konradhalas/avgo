@@ -4,7 +4,7 @@ module Server
         "It follows the shape of the standard HttpServer, but the handler is a state transition rather than a pure response."
     depends [Bytes, HttpWire, Web.Router, Web.Store]
     exposes [listen]
-    effects [Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int]
+    effects [Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs]
 
 record Session
     connection: Tcp.Connection
@@ -22,48 +22,48 @@ record DispatchFailure
 
 fn listen(port: Int, store: Store) -> Result<Unit, String>
     ? "Binds the port and serves until SIGINT or SIGTERM asks for a cooperative shutdown."
-    ! [Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int]
+    ! [Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs]
     run(Node(listener = Tcp.listen(port, 128)?, sessions = {}, nextKey = 1, store = store))
 
 fn run(node: Node) -> Result<Unit, String>
-    ? "One tick: check for shutdown, draw this tick's randomness, then wait for readable sockets."
-    ! [Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int]
+    ? "One tick: check for shutdown, draw the randomness and the clock reading this tick will use, then wait for readable sockets."
+    ! [Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs]
     keys = Map.keys(node.sessions)
     match Process.stopRequested()
         true -> shutdown(node)
-        false -> pollNext(node, Random.int(0, 4611686018427387903), Tcp.poll(sockets(node.sessions, keys, {0 => Tcp.Socket.Listening(node.listener)}), 250))
+        false -> pollNext(node, Web.Router.Tick(entropy = Random.int(0, 4611686018427387903), now = Time.unixMs()), Tcp.poll(sockets(node.sessions, keys, {0 => Tcp.Socket.Listening(node.listener)}), 250))
 
-fn pollNext(node: Node, entropy: Int, ready: Result<List<Int>, String>) -> Result<Unit, String>
+fn pollNext(node: Node, tick: Web.Router.Tick, ready: Result<List<Int>, String>) -> Result<Unit, String>
     ? "A poll failure closes every resource before the original error escapes."
-    ! [Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int]
+    ! [Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs]
     match ready
         Result.Err(reason) -> fail(node, reason)
-        Result.Ok(keys) -> continue(node, dispatch(node, entropy, keys))
+        Result.Ok(keys) -> continue(node, dispatch(node, tick, keys))
 
 fn continue(node: Node, next: Result<Node, DispatchFailure>) -> Result<Unit, String>
     ? "A per-session failure never kills the server; a listener failure still tears everything down."
-    ! [Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int]
+    ! [Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs]
     match next
         Result.Err(failure) -> fail(failure.node, failure.reason)
         Result.Ok(updated) -> run(updated)
 
-fn dispatch(node: Node, entropy: Int, ready: List<Int>) -> Result<Node, DispatchFailure>
+fn dispatch(node: Node, tick: Web.Router.Tick, ready: List<Int>) -> Result<Node, DispatchFailure>
     ? "Serves every key the poll reported ready, carrying the store forward between them."
     ! [Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close]
     match ready
         [] -> Result.Ok(node)
-        [key, ..rest] -> match serveKey(node, entropy, key)
+        [key, ..rest] -> match serveKey(node, tick, key)
             Result.Err(reason) -> Result.Err(DispatchFailure(node = node, reason = reason))
-            Result.Ok(updated) -> dispatch(updated, entropy, rest)
+            Result.Ok(updated) -> dispatch(updated, tick, rest)
 
-fn serveKey(node: Node, entropy: Int, key: Int) -> Result<Node, String>
+fn serveKey(node: Node, tick: Web.Router.Tick, key: Int) -> Result<Node, String>
     ? "Key zero is the listener; every positive key is one open HTTP session."
     ! [Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close]
     match key == 0
         true -> acceptOne(node)
         false -> match Map.get(node.sessions, key)
             Option.None -> Result.Ok(node)
-            Option.Some(session) -> pump(node, entropy, key, session)
+            Option.Some(session) -> pump(node, tick, key, session)
 
 fn acceptOne(node: Node) -> Result<Node, String>
     ? "Accept stays non-blocking, so a false wakeup costs nothing."
@@ -74,47 +74,47 @@ fn acceptOne(node: Node) -> Result<Node, String>
             Option.None -> Result.Ok(node)
             Option.Some(connection) -> Result.Ok(Node.update(node, sessions = Map.set(node.sessions, node.nextKey, Session(connection = connection, buffer = String.toUtf8(""))), nextKey = node.nextKey + 1))
 
-fn pump(node: Node, entropy: Int, key: Int, session: Session) -> Result<Node, String>
+fn pump(node: Node, tick: Web.Router.Tick, key: Int, session: Session) -> Result<Node, String>
     ? "Reads one available chunk; a broken connection removes only its own session."
     ! [Tcp.readSome, Tcp.writeBytes, Tcp.close]
     match Tcp.readSome(session.connection, 65536)
         Result.Err(_) -> dropSession(node, key, session)
-        Result.Ok(chunk) -> absorb(node, entropy, key, session, chunk)
+        Result.Ok(chunk) -> absorb(node, tick, key, session, chunk)
 
-fn absorb(node: Node, entropy: Int, key: Int, session: Session, chunk: Bytes) -> Result<Node, String>
+fn absorb(node: Node, tick: Web.Router.Tick, key: Int, session: Session, chunk: Bytes) -> Result<Node, String>
     ? "Empty bytes are a clean EOF; anything else extends the framing buffer."
     ! [Tcp.writeBytes, Tcp.close]
     match Bytes.octets(chunk)
         [] -> dropSession(node, key, session)
         [_, .._] -> match Bytes.fromList(List.concat(Bytes.octets(session.buffer), Bytes.octets(chunk)))
             Result.Err(_) -> dropSession(node, key, session)
-            Result.Ok(buffer) -> frame(node, entropy, key, Session(connection = session.connection, buffer = buffer))
+            Result.Ok(buffer) -> frame(node, tick, key, Session(connection = session.connection, buffer = buffer))
 
-fn frame(node: Node, entropy: Int, key: Int, session: Session) -> Result<Node, String>
+fn frame(node: Node, tick: Web.Router.Tick, key: Int, session: Session) -> Result<Node, String>
     ? "Complete requests are answered immediately; a partial one waits for the next poll."
     ! [Tcp.writeBytes, Tcp.close]
     match HttpWire.frameRequest(session.buffer)
         HttpWire.Framed.Partial -> Result.Ok(remember(node, key, session))
         HttpWire.Framed.Malformed(reason) -> refuse(node, key, session, reason)
-        HttpWire.Framed.Complete(request, used) -> answer(node, entropy, key, session, request, used, Web.Router.handle(node.store, entropy, request))
+        HttpWire.Framed.Complete(request, used) -> answer(node, tick, key, session, request, used, Web.Router.handle(node.store, tick, request))
 
-fn answer(node: Node, entropy: Int, key: Int, session: Session, request: HttpRequest, used: Int, reply: Web.Router.Reply) -> Result<Node, String>
+fn answer(node: Node, tick: Web.Router.Tick, key: Int, session: Session, request: HttpRequest, used: Int, reply: Web.Router.Reply) -> Result<Node, String>
     ? "The router's new store is adopted whether or not the write to this one client succeeds."
     ! [Tcp.writeBytes, Tcp.close]
     match HttpWire.renderResponse(reply.response)
         Result.Err(_) -> dropSession(Node.update(node, store = reply.store), key, session)
         Result.Ok(payload) -> match Tcp.writeBytes(session.connection, payload)
             Result.Err(_) -> dropSession(Node.update(node, store = reply.store), key, session)
-            Result.Ok(_) -> afterAnswer(Node.update(node, store = reply.store), entropy, key, session, request, used, reply.response)
+            Result.Ok(_) -> afterAnswer(Node.update(node, store = reply.store), tick, key, session, request, used, reply.response)
 
-fn afterAnswer(node: Node, entropy: Int, key: Int, session: Session, request: HttpRequest, used: Int, response: Http.Response) -> Result<Node, String>
+fn afterAnswer(node: Node, tick: Web.Router.Tick, key: Int, session: Session, request: HttpRequest, used: Int, response: Http.Response) -> Result<Node, String>
     ? "Honours connection close, and otherwise advances the buffer by exactly the framed byte count."
     ! [Tcp.writeBytes, Tcp.close]
     match Bool.or(HttpWire.requestCloses(request), HttpWire.responseCloses(response))
         true -> dropSession(node, key, session)
         false -> match Bytes.fromList(List.drop(Bytes.octets(session.buffer), used))
             Result.Err(_) -> dropSession(node, key, session)
-            Result.Ok(buffer) -> frame(node, entropy, key, Session(connection = session.connection, buffer = buffer))
+            Result.Ok(buffer) -> frame(node, tick, key, Session(connection = session.connection, buffer = buffer))
 
 fn refuse(node: Node, key: Int, session: Session, reason: String) -> Result<Node, String>
     ? "Unframeable input gets one bounded 400 and then the stream closes."

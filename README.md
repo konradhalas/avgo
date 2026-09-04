@@ -14,8 +14,8 @@ and play starts. Colours are drawn at random, the board is 9×9, and every game
 lives in memory only — restarting the server forgets them all.
 
 <p align="center">
-  <img src="docs/screenshot.jpg" width="400"
-       alt="The board five moves in: black on tengen and two star points, white on two more">
+  <img src="docs/screenshot.jpg" width="600"
+       alt="The board on the left, players, controls and chat in a column on the right">
 </p>
 
 ## Run it

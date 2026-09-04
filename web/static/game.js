@@ -213,11 +213,47 @@ function seat(color, name) {
   el.classList.toggle('is-open', !name);
 }
 
+function clockOf(at) {
+  if (!at) return '';
+  return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function bubble(message, previous) {
+  const mine = message.color === state.you;
+  const line = document.createElement('li');
+  line.className = 'chat-line' + (mine ? ' is-mine' : '');
+
+  const body = document.createElement('div');
+  body.className = 'bubble';
+
+  // The name earns its place only when the speaker just changed, and never on
+  // your own messages — those are the ones sitting on the right.
+  if (!mine && (!previous || previous.color !== message.color)) {
+    const who = document.createElement('span');
+    who.className = 'bubble-who';
+    who.textContent = nameOf(message.color);
+    body.append(who);
+  }
+
+  const said = document.createElement('span');
+  said.className = 'bubble-text';
+  // Messages are other people's text, so they are written as text.
+  said.textContent = message.text;
+
+  const at = document.createElement('time');
+  at.className = 'bubble-at';
+  at.textContent = clockOf(message.at);
+
+  body.append(said, at);
+  line.append(body);
+  return line;
+}
+
 function renderChat() {
   const messages = state.messages || [];
   // Rebuilding every second would fight the reader's scroll and selection, so
   // the log is only redrawn when it actually changed.
-  const signature = messages.length + ':' + (messages.length ? messages[messages.length - 1].text : '');
+  const signature = messages.length + ':' + (messages.length ? messages[messages.length - 1].at : '');
   chatPanel.hidden = false;
   chatForm.hidden = state.you === 0;
   chatEmpty.hidden = messages.length > 0;
@@ -228,19 +264,9 @@ function renderChat() {
   const atBottom = chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight < 24;
 
   chatLog.textContent = '';
-  for (const message of messages) {
-    const line = document.createElement('li');
-    line.className = 'chat-line' + (message.color === 2 ? ' is-white' : '');
-    const who = document.createElement('b');
-    who.className = 'chat-who';
-    who.textContent = nameOf(message.color);
-    const said = document.createElement('span');
-    said.className = 'chat-text';
-    // Messages are other people's text, so they are written as text.
-    said.textContent = message.text;
-    line.append(who, said);
-    chatLog.append(line);
-  }
+  messages.forEach((message, index) => {
+    chatLog.append(bubble(message, messages[index - 1]));
+  });
 
   if (atBottom) chatLog.scrollTop = chatLog.scrollHeight;
 }

@@ -7,55 +7,58 @@
 <link rel="stylesheet" href="/static/avgo.css">
 </head>
 <body>
-  <header class="masthead stack">
-    <div class="seats" id="seats" hidden>
-      <span class="seat" id="seatBlack">
-        <i class="stone"></i>
-        <span class="seat-name"></span>
-        <span class="seat-you"></span>
-        <span class="seat-captures" title="stones captured"></span>
-      </span>
-      <span class="seat" id="seatWhite">
-        <i class="stone stone-white"></i>
-        <span class="seat-name"></span>
-        <span class="seat-you"></span>
-        <span class="seat-captures" title="stones captured"></span>
-      </span>
+  <main class="table">
+    <div class="board-frame">
+      <canvas class="board" id="board" width="560" height="560"></canvas>
     </div>
-    <p class="center" id="status">Loading&hellip;</p>
-  </header>
 
-  <div class="board-frame">
-    <canvas class="board" id="board" width="560" height="560"></canvas>
-  </div>
+    <aside class="side">
+      <div class="seats" id="seats" hidden>
+        <span class="seat" id="seatBlack">
+          <i class="stone"></i>
+          <span class="seat-name"></span>
+          <span class="seat-you"></span>
+          <span class="seat-captures" title="stones captured"></span>
+        </span>
+        <span class="seat" id="seatWhite">
+          <i class="stone stone-white"></i>
+          <span class="seat-name"></span>
+          <span class="seat-you"></span>
+          <span class="seat-captures" title="stones captured"></span>
+        </span>
+      </div>
 
-  <div class="row">
-    <button class="btn" id="pass" disabled>Pass</button>
-    <span class="meta" id="score"></span>
-  </div>
+      <p class="center" id="status">Loading&hellip;</p>
 
-  <div class="row" id="inviteRow" hidden>
-    <input class="field" id="invite" readonly aria-label="Invite link">
-    <button class="btn" id="copy">Copy link</button>
-  </div>
+      <div class="row">
+        <button class="btn" id="pass" disabled>Pass</button>
+        <span class="meta" id="score"></span>
+      </div>
 
-  <form class="row" id="joinForm" hidden>
-    <input class="field" id="joinName" maxlength="24" required
-           autocomplete="nickname" placeholder="Your name">
-    <button class="btn btn-primary" type="submit">Join game</button>
-  </form>
+      <div class="row" id="inviteRow" hidden>
+        <input class="field" id="invite" readonly aria-label="Invite link">
+        <button class="btn" id="copy">Copy link</button>
+      </div>
 
-  <section class="card chat" id="chat" hidden>
-    <ul class="chat-log" id="chatLog"></ul>
-    <p class="muted center chat-empty" id="chatEmpty">No messages yet.</p>
-    <form class="row" id="chatForm" hidden>
-      <input class="field" id="chatText" maxlength="200" required
-             autocomplete="off" placeholder="Say something">
-      <button class="btn" type="submit">Send</button>
-    </form>
-  </section>
+      <form class="row" id="joinForm" hidden>
+        <input class="field" id="joinName" maxlength="24" required
+               autocomplete="nickname" placeholder="Your name">
+        <button class="btn btn-primary" type="submit">Join game</button>
+      </form>
 
-  <p class="error center" id="error"></p>
+      <section class="chat" id="chat" hidden>
+        <ul class="chat-log" id="chatLog"></ul>
+        <p class="muted center chat-empty" id="chatEmpty">No messages yet.</p>
+        <!-- One field and no button: Enter submits the form on its own. -->
+        <form id="chatForm" hidden>
+          <input class="field chat-input" id="chatText" maxlength="200" required
+                 autocomplete="off" placeholder="Message">
+        </form>
+      </section>
+
+      <p class="error center" id="error"></p>
+    </aside>
+  </main>
 
   <script src="/static/game.js"></script>
 </body>

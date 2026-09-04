@@ -3,31 +3,35 @@ module Router
         "The whole HTTP surface as one pure function: a store and a request in, a new store and a response out."
         "Keeping routing pure means every endpoint is directly verifiable without a socket."
     depends [Go.Game, Go.Board, Web.Store, Bytes]
-    exposes [Reply, handle]
+    exposes [Reply, Tick, handle]
     effects []
 
 record Reply
     store: Store
     response: Http.Response
 
-fn handle(store: Store, entropy: Int, request: HttpRequest) -> Reply
-    ? "Routes one request. `entropy` is the randomness the socket loop drew for this tick."
-    route(store, entropy, request, String.split(request.path, "/"))
+record Tick
+    entropy: Int
+    now: Int
 
-fn route(store: Store, entropy: Int, request: HttpRequest, segments: List<String>) -> Reply
+fn handle(store: Store, tick: Tick, request: HttpRequest) -> Reply
+    ? "Routes one request. `tick` is the randomness the socket loop drew for this tick."
+    route(store, tick, request, String.split(request.path, "/"))
+
+fn route(store: Store, tick: Tick, request: HttpRequest, segments: List<String>) -> Reply
     ? "Every path starts with a slash, so the first segment is always empty and is dropped."
     match segments
         [] -> notFound(store)
-        [_, ..rest] -> top(store, entropy, request, rest)
+        [_, ..rest] -> top(store, tick, request, rest)
 
-fn top(store: Store, entropy: Int, request: HttpRequest, segments: List<String>) -> Reply
+fn top(store: Store, tick: Tick, request: HttpRequest, segments: List<String>) -> Reply
     ? "The three top-level areas: the lobby, a game page, and the JSON API."
     match segments
         [] -> notFound(store)
         [first, ..rest] -> match first
             "" -> pageReply(store, store.lobbyPage)
             "g" -> pageReply(store, store.gamePage)
-            "api" -> api(store, entropy, request, rest)
+            "api" -> api(store, tick, request, rest)
             "static" -> staticReply(store, rest)
             _ -> notFound(store)
 
@@ -45,60 +49,60 @@ fn served(store: Store, found: Option<Asset>) -> Reply
         Option.None -> refuse(store, 404, "no such asset")
         Option.Some(file) -> Reply(store = store, response = Http.Response(status = 200, body = file.body, headers = {"content-type" => [file.contentType], "cache-control" => ["no-cache"]}))
 
-fn api(store: Store, entropy: Int, request: HttpRequest, segments: List<String>) -> Reply
+fn api(store: Store, tick: Tick, request: HttpRequest, segments: List<String>) -> Reply
     ? "The API has exactly one collection."
     match segments
         [] -> notFound(store)
         [first, ..rest] -> match first == "games"
             false -> notFound(store)
-            true -> games(store, entropy, request, rest)
+            true -> games(store, tick, request, rest)
 
-fn games(store: Store, entropy: Int, request: HttpRequest, segments: List<String>) -> Reply
+fn games(store: Store, tick: Tick, request: HttpRequest, segments: List<String>) -> Reply
     ? "POST /api/games creates a game; anything deeper addresses one existing game."
     match segments
         [] -> match request.method == "POST"
-            true -> create(store, entropy, request)
+            true -> create(store, tick, request)
             false -> refuse(store, 405, "use POST to create a game")
-        [id, ..rest] -> game(store, entropy, request, id, rest)
+        [id, ..rest] -> game(store, tick, request, id, rest)
 
-fn game(store: Store, entropy: Int, request: HttpRequest, id: String, segments: List<String>) -> Reply
+fn game(store: Store, tick: Tick, request: HttpRequest, id: String, segments: List<String>) -> Reply
     ? "Reading a game is a GET on the game itself; join and move are POSTs beneath it."
     match segments
-        [] -> withGame(store, entropy, request, id, "state")
+        [] -> withGame(store, tick, request, id, "state")
         [action, ..rest] -> match action
-            "join" -> withGame(store, entropy, request, id, "join")
-            "move" -> withGame(store, entropy, request, id, "move")
-            "chat" -> withGame(store, entropy, request, id, "chat")
+            "join" -> withGame(store, tick, request, id, "join")
+            "move" -> withGame(store, tick, request, id, "move")
+            "chat" -> withGame(store, tick, request, id, "chat")
             _ -> notFound(store)
 
-fn withGame(store: Store, entropy: Int, request: HttpRequest, id: String, action: String) -> Reply
+fn withGame(store: Store, tick: Tick, request: HttpRequest, id: String, action: String) -> Reply
     ? "Every game endpoint needs the game to exist before the action means anything."
     match Web.Store.find(store, id)
         Option.None -> refuse(store, 404, "no such game")
-        Option.Some(found) -> act(store, entropy, request, id, action, found, token(request))
+        Option.Some(found) -> act(store, tick, request, id, action, found, token(request))
 
-fn act(store: Store, entropy: Int, request: HttpRequest, id: String, action: String, found: Game, playerToken: String) -> Reply
+fn act(store: Store, tick: Tick, request: HttpRequest, id: String, action: String, found: Game, playerToken: String) -> Reply
     ? "Dispatches the resolved game to the endpoint that was asked for."
     match action
         "state" -> stateReply(store, id, found, playerToken)
-        "join" -> joinReply(store, entropy, id, found, playerToken, request)
+        "join" -> joinReply(store, tick, id, found, playerToken, request)
         "move" -> moveReply(store, id, found, playerToken, request)
-        "chat" -> chatReply(store, id, found, playerToken, request)
+        "chat" -> chatReply(store, tick, id, found, playerToken, request)
         _ -> notFound(store)
 
-fn create(store: Store, entropy: Int, request: HttpRequest) -> Reply
+fn create(store: Store, tick: Tick, request: HttpRequest) -> Reply
     ? "Mints an id, a creator token and a drawn colour, and seats the creator under the name they gave."
-    minted(store, Web.Store.mintId(entropy, store.counter), Web.Store.mintToken(entropy, store.counter), Web.Store.drawColor(entropy, store.counter), playerName(request.body))
+    minted(store, Web.Store.mintId(tick.entropy, store.counter), Web.Store.mintToken(tick.entropy, store.counter), Web.Store.drawColor(tick.entropy, store.counter), playerName(request.body))
 
 fn minted(store: Store, id: String, playerToken: String, color: Int, name: String) -> Reply
     ? "The creator is told its id, its secret and its colour; the second seat stays open."
     Reply(store = Web.Store.put(store, id, Go.Game.newGame(playerToken, color, name)), response = json(200, "{{\"id\":\"{id}\",\"token\":\"{playerToken}\",\"color\":{color}}}"))
 
-fn joinReply(store: Store, entropy: Int, id: String, found: Game, existingToken: String, request: HttpRequest) -> Reply
+fn joinReply(store: Store, tick: Tick, id: String, found: Game, existingToken: String, request: HttpRequest) -> Reply
     ? "A browser already holding a seat re-joins as itself instead of taking the last seat twice."
     match Go.Game.colorOf(found, existingToken) == 0
         false -> seated(store, existingToken, Go.Game.colorOf(found, existingToken))
-        true -> joinFresh(store, id, found, Web.Store.mintToken(entropy, store.counter), playerName(request.body))
+        true -> joinFresh(store, id, found, Web.Store.mintToken(tick.entropy, store.counter), playerName(request.body))
 
 fn joinFresh(store: Store, id: String, found: Game, playerToken: String, name: String) -> Reply
     ? "Takes the open seat, or reports that both seats are gone."
@@ -128,9 +132,9 @@ fn applied(store: Store, id: String, playerToken: String, outcome: Result<Game, 
         Result.Err(reason) -> refuse(store, 409, reason)
         Result.Ok(next) -> stateReply(Web.Store.put(store, id, next), id, next, playerToken)
 
-fn chatReply(store: Store, id: String, found: Game, playerToken: String, request: HttpRequest) -> Reply
+fn chatReply(store: Store, tick: Tick, id: String, found: Game, playerToken: String, request: HttpRequest) -> Reply
     ? "One line of chat. A refusal reads like any other, and success returns the whole state so the sender sees it at once."
-    applied(store, id, playerToken, Go.Game.say(found, playerToken, chatText(request.body)))
+    applied(store, id, playerToken, Go.Game.say(found, playerToken, chatText(request.body), tick.now))
 
 fn chatText(body: String) -> String
     ? "The message from a request body: decoded, stripped of control characters, and bounded."
@@ -170,7 +174,7 @@ fn chatEntries(messages: List<Message>, acc: List<String>) -> List<String>
 
 fn entryJson(message: Message) -> String
     ? "One message: who said it, and what they said."
-    "{{\"color\":{message.color},\"text\":\"{escapeJson(message.text)}\"}}"
+    "{{\"color\":{message.color},\"at\":{message.at},\"text\":\"{escapeJson(message.text)}\"}}"
 
 fn stateReply(store: Store, id: String, found: Game, playerToken: String) -> Reply
     ? "The single JSON document the browser polls for."
@@ -324,54 +328,54 @@ verify statusOf
     statusOf(notFound(Web.Store.empty("l", "g"))) => 404
 
 verify handle
-    statusOf(handle(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""))) => 200
-    statusOf(handle(Web.Store.empty("l", "g"), 7, asRequest("GET", "/nope", "", ""))) => 404
-    handle(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", "")).response.body => "l"
+    statusOf(handle(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("GET", "/", "", ""))) => 200
+    statusOf(handle(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("GET", "/nope", "", ""))) => 404
+    handle(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("GET", "/", "", "")).response.body => "l"
 
 verify route
-    statusOf(route(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""), [])) => 404
-    statusOf(route(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""), ["", ""])) => 200
+    statusOf(route(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("GET", "/", "", ""), [])) => 404
+    statusOf(route(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("GET", "/", "", ""), ["", ""])) => 200
 
 verify top
-    statusOf(top(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""), [])) => 404
-    top(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""), [""]).response.body => "l"
-    top(Web.Store.empty("l", "g"), 7, asRequest("GET", "/g/x", "", ""), ["g", "x"]).response.body => "g"
-    statusOf(top(Web.Store.empty("l", "g"), 7, asRequest("GET", "/x", "", ""), ["x"])) => 404
+    statusOf(top(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("GET", "/", "", ""), [])) => 404
+    top(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("GET", "/", "", ""), [""]).response.body => "l"
+    top(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("GET", "/g/x", "", ""), ["g", "x"]).response.body => "g"
+    statusOf(top(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("GET", "/x", "", ""), ["x"])) => 404
 
 verify api
-    statusOf(api(Web.Store.empty("l", "g"), 7, asRequest("GET", "/api", "", ""), [])) => 404
-    statusOf(api(Web.Store.empty("l", "g"), 7, asRequest("GET", "/api/x", "", ""), ["x"])) => 404
-    statusOf(api(Web.Store.empty("l", "g"), 7, asRequest("POST", "/api/games", "", "name=Ada"), ["games"])) => 200
+    statusOf(api(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("GET", "/api", "", ""), [])) => 404
+    statusOf(api(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("GET", "/api/x", "", ""), ["x"])) => 404
+    statusOf(api(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("POST", "/api/games", "", "name=Ada"), ["games"])) => 200
 
 verify games
-    statusOf(games(Web.Store.empty("l", "g"), 7, asRequest("GET", "/api/games", "", ""), [])) => 405
-    statusOf(games(Web.Store.empty("l", "g"), 7, asRequest("POST", "/api/games", "", "name=Ada"), [])) => 200
-    statusOf(games(Web.Store.empty("l", "g"), 7, asRequest("GET", "/api/games/x", "", ""), ["x"])) => 404
+    statusOf(games(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("GET", "/api/games", "", ""), [])) => 405
+    statusOf(games(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("POST", "/api/games", "", "name=Ada"), [])) => 200
+    statusOf(games(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("GET", "/api/games/x", "", ""), ["x"])) => 404
 
 verify game
-    statusOf(game(Web.Store.empty("l", "g"), 7, asRequest("GET", "/api/games/x", "", ""), "x", [])) => 404
-    statusOf(game(Web.Store.empty("l", "g"), 7, asRequest("POST", "/api/games/x/join", "", ""), "x", ["join"])) => 404
-    statusOf(game(Web.Store.empty("l", "g"), 7, asRequest("POST", "/api/games/x/bogus", "", ""), "x", ["bogus"])) => 404
+    statusOf(game(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("GET", "/api/games/x", "", ""), "x", [])) => 404
+    statusOf(game(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("POST", "/api/games/x/join", "", ""), "x", ["join"])) => 404
+    statusOf(game(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("POST", "/api/games/x/bogus", "", ""), "x", ["bogus"])) => 404
 
 verify withGame
-    statusOf(withGame(Web.Store.empty("l", "g"), 7, asRequest("GET", "/api/games/x", "", ""), "x", "state")) => 404
-    statusOf(withGame(Web.Store.put(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1, "Ada")), 7, withToken(asRequest("GET", "/api/games/x", "", ""), "t"), "x", "state")) => 200
+    statusOf(withGame(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("GET", "/api/games/x", "", ""), "x", "state")) => 404
+    statusOf(withGame(Web.Store.put(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1, "Ada")), Tick(entropy = 7, now = 1000), withToken(asRequest("GET", "/api/games/x", "", ""), "t"), "x", "state")) => 200
 
 verify act
-    statusOf(act(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""), "x", "state", Go.Game.newGame("t", 1, "Ada"), "t")) => 200
-    statusOf(act(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""), "x", "bogus", Go.Game.newGame("t", 1, "Ada"), "t")) => 404
+    statusOf(act(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("GET", "/", "", ""), "x", "state", Go.Game.newGame("t", 1, "Ada"), "t")) => 200
+    statusOf(act(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("GET", "/", "", ""), "x", "bogus", Go.Game.newGame("t", 1, "Ada"), "t")) => 404
 
 verify create
-    statusOf(create(Web.Store.empty("l", "g"), 7, asRequest("POST", "/api/games", "", "name=Ada"))) => 200
-    Map.len(create(Web.Store.empty("l", "g"), 7, asRequest("POST", "/api/games", "", "name=Ada")).store.games) => 1
+    statusOf(create(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("POST", "/api/games", "", "name=Ada"))) => 200
+    Map.len(create(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), asRequest("POST", "/api/games", "", "name=Ada")).store.games) => 1
 
 verify minted
     Map.len(minted(Web.Store.empty("l", "g"), "id1", "tok", 1, "Ada").store.games) => 1
     minted(Web.Store.empty("l", "g"), "id1", "tok", 1, "Ada").response.body => "{{\"id\":\"id1\",\"token\":\"tok\",\"color\":1}}"
 
 verify joinReply
-    statusOf(joinReply(Web.Store.empty("l", "g"), 7, "x", Go.Game.newGame("t", 1, "Ada"), "t", asRequest("POST", "/", "", "name=Bo"))) => 200
-    statusOf(joinReply(Web.Store.empty("l", "g"), 7, "x", Go.Game.newGame("t", 1, "Ada"), "", asRequest("POST", "/", "", "name=Bo"))) => 200
+    statusOf(joinReply(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), "x", Go.Game.newGame("t", 1, "Ada"), "t", asRequest("POST", "/", "", "name=Bo"))) => 200
+    statusOf(joinReply(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), "x", Go.Game.newGame("t", 1, "Ada"), "", asRequest("POST", "/", "", "name=Bo"))) => 200
 
 verify joinFresh
     statusOf(joinFresh(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1, "Ada"), "u", "Bo")) => 200
@@ -494,9 +498,9 @@ verify served
     served(Web.Store.empty("l", "g"), Option.Some(Web.Store.Asset(body = "b", contentType = "text/css"))).response.body => "b"
 
 verify chatReply
-    statusOf(chatReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1, "Ada"), "t", asRequest("POST", "/", "", "text=hi"))) => 200
-    statusOf(chatReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1, "Ada"), "zz", asRequest("POST", "/", "", "text=hi"))) => 409
-    statusOf(chatReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1, "Ada"), "t", asRequest("POST", "/", "", "text="))) => 409
+    statusOf(chatReply(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), "x", Go.Game.newGame("t", 1, "Ada"), "t", asRequest("POST", "/", "", "text=hi"))) => 200
+    statusOf(chatReply(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), "x", Go.Game.newGame("t", 1, "Ada"), "zz", asRequest("POST", "/", "", "text=hi"))) => 409
+    statusOf(chatReply(Web.Store.empty("l", "g"), Tick(entropy = 7, now = 1000), "x", Go.Game.newGame("t", 1, "Ada"), "t", asRequest("POST", "/", "", "text="))) => 409
 
 verify chatText
     chatText("text=hello") => "hello"
@@ -524,12 +528,12 @@ verify escapeJson
 
 verify chatJson
     chatJson([]) => "[]"
-    chatJson([Go.Game.Message(color = 1, text = "hi")]) => "[{{\"color\":1,\"text\":\"hi\"}}]"
-    chatJson([Go.Game.Message(color = 2, text = "b"), Go.Game.Message(color = 1, text = "a")]) => "[{{\"color\":1,\"text\":\"a\"}},{{\"color\":2,\"text\":\"b\"}}]"
+    chatJson([Go.Game.Message(color = 1, text = "hi", at = 1000)]) => "[{{\"color\":1,\"at\":1000,\"text\":\"hi\"}}]"
+    chatJson([Go.Game.Message(color = 2, text = "b", at = 1000), Go.Game.Message(color = 1, text = "a", at = 1000)]) => "[{{\"color\":1,\"at\":1000,\"text\":\"a\"}},{{\"color\":2,\"at\":1000,\"text\":\"b\"}}]"
 
 verify chatEntries
     chatEntries([], []) => []
-    chatEntries([Go.Game.Message(color = 1, text = "hi")], []) => ["{{\"color\":1,\"text\":\"hi\"}}"]
+    chatEntries([Go.Game.Message(color = 1, text = "hi", at = 1000)], []) => ["{{\"color\":1,\"at\":1000,\"text\":\"hi\"}}"]
 
 verify entryJson
-    entryJson(Go.Game.Message(color = 1, text = "hi")) => "{{\"color\":1,\"text\":\"hi\"}}"
+    entryJson(Go.Game.Message(color = 1, text = "hi", at = 1000)) => "{{\"color\":1,\"at\":1000,\"text\":\"hi\"}}"

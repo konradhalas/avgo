@@ -9,6 +9,7 @@ module Game
 record Message
     color: Int
     text: String
+    at: Int
 
 record Game
     board: Vector<Int>
@@ -124,17 +125,17 @@ fn backlog() -> Int
     ? "How many messages a game keeps. The whole log rides every poll, so it cannot grow without end."
     50
 
-fn say(game: Game, token: String, text: String) -> Result<Game, String>
-    ? "Records one line of chat from a seated player."
-    spoken(game, colorOf(game, token), text)
+fn say(game: Game, token: String, text: String, at: Int) -> Result<Game, String>
+    ? "Records one line of chat from a seated player, stamped with the moment the server received it."
+    spoken(game, colorOf(game, token), text, at)
 
-fn spoken(game: Game, color: Int, text: String) -> Result<Game, String>
+fn spoken(game: Game, color: Int, text: String, at: Int) -> Result<Game, String>
     ? "Only the two players may talk, and only with something to say."
     match color == 0
         true -> Result.Err("only the players can talk here")
         false -> match text == ""
             true -> Result.Err("a message cannot be empty")
-            false -> Result.Ok(Game.update(game, messages = List.take(List.prepend(Message(color = color, text = text), game.messages), backlog())))
+            false -> Result.Ok(Game.update(game, messages = List.take(List.prepend(Message(color = color, text = text, at = at), game.messages), backlog())))
 
 fn blackScore(game: Game) -> Int
     ? "Black's area score plus the stones black has captured."
@@ -226,10 +227,10 @@ verify backlog
     backlog() => 50
 
 verify say
-    say(blank("a", "b", "Ada", "Bo"), "zz", "hi") => Result.Err("only the players can talk here")
-    say(blank("a", "b", "Ada", "Bo"), "a", "") => Result.Err("a message cannot be empty")
-    say(blank("a", "b", "Ada", "Bo"), "a", "hi") => Result.Ok(Game.update(blank("a", "b", "Ada", "Bo"), messages = [Message(color = 1, text = "hi")]))
+    say(blank("a", "b", "Ada", "Bo"), "zz", "hi", 1000) => Result.Err("only the players can talk here")
+    say(blank("a", "b", "Ada", "Bo"), "a", "", 1000) => Result.Err("a message cannot be empty")
+    say(blank("a", "b", "Ada", "Bo"), "a", "hi", 1000) => Result.Ok(Game.update(blank("a", "b", "Ada", "Bo"), messages = [Message(color = 1, text = "hi", at = 1000)]))
 
 verify spoken
-    spoken(blank("a", "b", "Ada", "Bo"), 0, "hi") => Result.Err("only the players can talk here")
-    spoken(blank("a", "b", "Ada", "Bo"), 2, "hi") => Result.Ok(Game.update(blank("a", "b", "Ada", "Bo"), messages = [Message(color = 2, text = "hi")]))
+    spoken(blank("a", "b", "Ada", "Bo"), 0, "hi", 1000) => Result.Err("only the players can talk here")
+    spoken(blank("a", "b", "Ada", "Bo"), 2, "hi", 1000) => Result.Ok(Game.update(blank("a", "b", "Ada", "Bo"), messages = [Message(color = 2, text = "hi", at = 1000)]))

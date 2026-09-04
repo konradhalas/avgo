@@ -15,6 +15,9 @@
   --accent: #7a5c2e;
   --danger: #a03626;
 
+  --bubble-mine: #e9dfc7;
+  --bubble-them: #f4efe4;
+
   --wood: #dcb35c;
   --wood-deep: #c9993f;
   --grid: rgba(0, 0, 0, .58);
@@ -40,6 +43,9 @@
     --line: #332e26;
     --accent: #d9b675;
     --danger: #e08472;
+
+    --bubble-mine: #3a3226;
+    --bubble-them: #14120e;
 
     --wood: #b98f43;
     --wood-deep: #9d7733;
@@ -102,6 +108,32 @@ body {
 }
 
 .stack { display: flex; flex-direction: column; gap: 1rem; }
+
+/* Board on the left, everything about the game on the right. An explicit
+   breakpoint rather than flex-wrap: wrapping depended on arithmetic that a
+   scrollbar appearing was enough to tip over. */
+.table {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+  justify-content: center;
+  width: 100%;
+}
+
+.board-frame { min-width: 0; }
+
+.side {
+  width: 20rem;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+@media (max-width: 62rem) {
+  .table { flex-direction: column; align-items: center; }
+  .side { width: min(22rem, 100%); }
+}
 .row {
   display: flex;
   gap: .6rem;
@@ -200,6 +232,11 @@ body {
   background: var(--raised);
 }
 
+/* In the narrow column the two seats read better stacked than side by side. */
+.side .seats { flex-direction: column; align-items: stretch; gap: .3rem; }
+.side .seat { justify-content: flex-start; }
+.side .seat-captures { margin-left: auto; }
+
 .seat.is-open .seat-name { font-style: italic; }
 .seat-name { font-weight: 550; }
 .seat-you { color: var(--muted); font-size: .85rem; }
@@ -235,24 +272,73 @@ body {
 
 /* ----------------------------------------------------------------- chat -- */
 
-.chat { display: flex; flex-direction: column; gap: .8rem; }
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: .6rem;
+  padding: .7rem;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
 
 .chat-log {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: .1rem;
   display: flex;
   flex-direction: column;
-  gap: .3rem;
-  max-height: 12rem;
+  gap: .25rem;
+  height: 16rem;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
 .chat-log:empty { display: none; }
 
-.chat-line { display: flex; gap: .45rem; align-items: baseline; }
-.chat-who { font-weight: 550; flex: none; }
-.chat-line.is-white .chat-who { color: var(--muted); }
-.chat-text { overflow-wrap: anywhere; }
+.chat-line { display: flex; }
+.chat-line.is-mine { justify-content: flex-end; }
+
+.bubble {
+  max-width: 85%;
+  padding: .3rem .5rem;
+  border-radius: .75rem;
+  background: var(--bubble-them);
+  border: 1px solid var(--line);
+  font-size: .92rem;
+  line-height: 1.35;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .4rem;
+}
+
+.chat-line:not(.is-mine) .bubble { border-bottom-left-radius: .2rem; }
+
+.is-mine .bubble {
+  background: var(--bubble-mine);
+  border-color: transparent;
+  border-bottom-right-radius: .2rem;
+}
+
+/* Who spoke is only worth saying when the speaker changed, and never for you:
+   your own messages are the ones on the right. */
+.bubble-who {
+  flex-basis: 100%;
+  font-size: .76rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.bubble-text { overflow-wrap: anywhere; }
+
+.bubble-at {
+  margin-left: auto;
+  font-size: .7rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-input { border-radius: 1.2rem; flex: 1 1 auto; width: 100%; }
 .chat-empty { margin: 0; font-size: .92rem; }

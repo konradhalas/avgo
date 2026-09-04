@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # The toolchain stage compiles aver from source, which is the slow part of
+      # every build here. It is cached so later runs only redo what changed.
+      - name: Build the Aver toolchain image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: dev
+          load: true
+          tags: avgo-toolchain:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Type-check every module
+        run: |
+          docker run --rm -v "$PWD":/app -w /app avgo-toolchain:ci \
+            check main.av --module-root .
+
+      - name: Run the verify blocks
+        run: |
+          docker run --rm -v "$PWD":/app -w /app avgo-toolchain:ci \
+            verify . --module-root .
+
+      - name: Build the runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          load: true
+          tags: avgo:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The verify blocks cover the rules; this covers the wiring between them:
+      # a real container, over a real socket, playing a real game.
+      - name: Play a game against the built image
+        run: |
+          set -euo pipefail
+          base=http://localhost:8080
+
+          docker run --rm -d --name avgo-ci -p 8080:8080 avgo:ci
+
+          for _ in $(seq 30); do
+            curl -sf "$base/" >/dev/null && break
+            sleep 1
+          done
+
+          curl -sf "$base/" >/dev/null
+
+          created=$(curl -sf -X POST "$base/api/games")
+          id=$(jq -er .id <<<"$created")
+          creator_token=$(jq -er .token <<<"$created")
+          creator_color=$(jq -er .color <<<"$created")
+
+          joined=$(curl -sf -X POST "$base/api/games/$id/join")
+          joiner_token=$(jq -er .token <<<"$joined")
+
+          if [ "$creator_color" = 1 ]; then
+            black=$creator_token
+          else
+            black=$joiner_token
+          fi
+
+          state=$(curl -sf -X POST -H "x-player-token: $black" \
+            -d 'idx=40' "$base/api/games/$id/move")
+          test "$(jq -er .turn <<<"$state")" = 2
+          test "$(jq -er .moves <<<"$state")" = 1
+
+          # Black moving twice in a row must be refused, not accepted.
+          out_of_turn=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H "x-player-token: $black" -d 'idx=41' "$base/api/games/$id/move")
+          test "$out_of_turn" = 409
+
+          # A game nobody created does not exist.
+          missing=$(curl -s -o /dev/null -w '%{http_code}' "$base/api/games/nope")
+          test "$missing" = 404
+
+          echo "smoke test passed"
+
+      - name: Stop the container
+        if: always()
+        run: docker rm -f avgo-ci || true

@@ -1,5 +1,7 @@
 # avgo
 
+[![CI](https://github.com/konradhalas/avgo/actions/workflows/ci.yml/badge.svg)](https://github.com/konradhalas/avgo/actions/workflows/ci.yml)
+
 A two-player game of Go over the web, written in [Aver](https://averlang.dev/).
 
 Open the site, press **Create game**, send the link you get to one other person.
@@ -100,6 +102,12 @@ docker run --rm -v "$PWD":/app -w /app avgo-toolchain \
 `aver check` treats a function without a `verify` block as an error, so every
 function here has one: 180 cases across 5 modules, covering captures, suicide,
 ko, scoring and each HTTP route.
+
+CI (`.github/workflows/ci.yml`) runs both of those on every push and pull
+request, builds the runtime image, and then plays a game against the container
+it just built — create, join, a move, a move out of turn, an unknown game.
+Both `aver` commands exit non-zero on failure, so a broken rule fails the
+build rather than being reported and ignored.
 
 ## Known limits
 

@@ -95,6 +95,15 @@ as `{"error": "..."}` with a 4xx status and are shown to the player verbatim.
 
 ## Development
 
+Run it with the sources mounted and the pages re-read as you edit them:
+
+```bash
+docker compose -f docker-compose.dev.yml up --build
+```
+
+That reloads pages, styles and scripts without a restart, so a game in progress
+survives an edit. A change to a `.av` file still needs the server restarted.
+
 There is no local `aver` install; the toolchain lives in an image:
 
 ```bash

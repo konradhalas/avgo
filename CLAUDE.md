@@ -14,11 +14,13 @@ Never read `HttpRequest.query`. It type-checks and then dies at runtime with
 arena does not. Constructing a request with `query` is fine; the value is just
 dropped. This is why the player token travels in a header.
 
-The pages, the stylesheet and the scripts are all read from disk **once at
-startup** and held in the store, so editing any of them needs the server
-restarted before the change is visible. The bare file name is the key: the
-router matches `/static/<name>` against that map, which is also why no path
-traversal is possible.
+The pages, the stylesheet and the scripts are read from disk into the store.
+With `AVGO_DEV` set the serve loop re-reads them once per tick, so an edit
+shows on the next browser reload and the games in progress survive it; without
+it they are read once at startup and a restart is needed. `docker compose -f
+docker-compose.dev.yml up` is the development setup. A `.av` edit always needs
+a restart. The bare file name is the key: the router matches `/static/<name>`
+against that map, which is also why no path traversal is possible.
 
 The pages live in `web/static/*.html` rather than in Aver string literals
 because Aver strings are single-line and `{` starts an interpolation (`{{`

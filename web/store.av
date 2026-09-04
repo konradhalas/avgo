@@ -3,7 +3,7 @@ module Store
         "The whole server state: every live game plus the static pages, held in memory only."
         "Nothing here is persisted; restarting the container forgets every game, which is the MVP contract."
     depends [Go.Game, Bytes, Crypto.Digest32]
-    exposes [Store, Asset, empty, put, find, withAsset, asset, mintId, mintToken, drawColor]
+    exposes [Store, Asset, empty, put, find, withAsset, withPages, asset, assetBody, mintId, mintToken, drawColor]
     effects []
 
 record Store
@@ -32,6 +32,16 @@ fn find(store: Store, id: String) -> Option<Game>
 fn withAsset(store: Store, name: String, body: String, contentType: String) -> Store
     ? "Remembers one stylesheet or script, read from disk once at startup."
     Store.update(store, assets = Map.set(store.assets, name, Asset(body = body, contentType = contentType)))
+
+fn withPages(store: Store, lobbyPage: String, gamePage: String) -> Store
+    ? "Replaces the two pages, which is what a development reload does to them."
+    Store.update(store, lobbyPage = lobbyPage, gamePage = gamePage)
+
+fn assetBody(store: Store, name: String) -> String
+    ? "The text of one asset, or empty when nothing is stored under that name."
+    match asset(store, name)
+        Option.None -> ""
+        Option.Some(file) -> file.body
 
 fn asset(store: Store, name: String) -> Option<Asset>
     ? "Looks one asset up by its bare file name; an unknown name is an ordinary Option.None."
@@ -77,3 +87,11 @@ verify asset
     asset(empty("l", "g"), "avgo.css") => Option.None
     asset(withAsset(empty("l", "g"), "avgo.css", "b", "text/css"), "nope.css") => Option.None
     asset(withAsset(empty("l", "g"), "avgo.css", "b", "text/css"), "avgo.css") => Option.Some(Asset(body = "b", contentType = "text/css"))
+
+verify withPages
+    withPages(empty("l", "g"), "L", "G").lobbyPage => "L"
+    withPages(empty("l", "g"), "L", "G").gamePage => "G"
+
+verify assetBody
+    assetBody(empty("l", "g"), "avgo.css") => ""
+    assetBody(withAsset(empty("l", "g"), "avgo.css", "body {}", "text/css"), "avgo.css") => "body {}"

@@ -1,0 +1,21 @@
+# Development. The toolchain image with the sources mounted, so editing a page,
+# the stylesheet or a script shows on the next browser reload — no restart, and
+# the games in progress survive the edit.
+#
+#   docker compose -f docker-compose.dev.yml up --build
+#
+# Editing a .av file still needs a restart: Aver source is read once, at start.
+
+services:
+  avgo:
+    build:
+      context: .
+      target: dev
+    command: ["run", "main.av", "--module-root", "."]
+    volumes:
+      - .:/app
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      AVGO_DEV: "1"

@@ -4,7 +4,7 @@ module Server
         "It follows the shape of the standard HttpServer, but the handler is a state transition rather than a pure response."
     depends [Bytes, HttpWire, Web.Router, Web.Store]
     exposes [listen]
-    effects [Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs]
+    effects [Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs, Disk.readText]
 
 record Session
     connection: Tcp.Connection
@@ -15,34 +15,63 @@ record Node
     sessions: Map<Int, Session>
     nextKey: Int
     store: Store
+    reloading: Bool
 
 record DispatchFailure
     node: Node
     reason: String
 
-fn listen(port: Int, store: Store) -> Result<Unit, String>
+fn listen(port: Int, store: Store, reloading: Bool) -> Result<Unit, String>
     ? "Binds the port and serves until SIGINT or SIGTERM asks for a cooperative shutdown."
-    ! [Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs]
-    run(Node(listener = Tcp.listen(port, 128)?, sessions = {}, nextKey = 1, store = store))
+    ! [Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs, Disk.readText]
+    run(Node(listener = Tcp.listen(port, 128)?, sessions = {}, nextKey = 1, store = store, reloading = reloading))
 
 fn run(node: Node) -> Result<Unit, String>
     ? "One tick: check for shutdown, draw the randomness and the clock reading this tick will use, then wait for readable sockets."
-    ! [Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs]
+    ! [Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs, Disk.readText]
     keys = Map.keys(node.sessions)
     match Process.stopRequested()
         true -> shutdown(node)
-        false -> pollNext(node, Web.Router.Tick(entropy = Random.int(0, 4611686018427387903), now = Time.unixMs()), Tcp.poll(sockets(node.sessions, keys, {0 => Tcp.Socket.Listening(node.listener)}), 250))
+        false -> pollNext(reloaded(node), Web.Router.Tick(entropy = Random.int(0, 4611686018427387903), now = Time.unixMs()), Tcp.poll(sockets(node.sessions, keys, {0 => Tcp.Socket.Listening(node.listener)}), 250))
+
+fn reloaded(node: Node) -> Node
+    ? "In development the pages, the stylesheet and the scripts are re-read each tick, so an edit shows on the next reload without losing the games in progress."
+    ! [Disk.readText]
+    match node.reloading
+        false -> node
+        true -> Node.update(node, store = reread(node.store))
+
+fn reread(store: Store) -> Store
+    ? "Re-reads every file the store was built from."
+    ! [Disk.readText]
+    Web.Store.withAsset(Web.Store.withAsset(Web.Store.withAsset(pages(store), "avgo.css", fresh("web/static/avgo.css", Web.Store.assetBody(store, "avgo.css")), "text/css; charset=utf-8"), "lobby.js", fresh("web/static/lobby.js", Web.Store.assetBody(store, "lobby.js")), "text/javascript; charset=utf-8"), "game.js", fresh("web/static/game.js", Web.Store.assetBody(store, "game.js")), "text/javascript; charset=utf-8")
+
+fn pages(store: Store) -> Store
+    ? "The two pages are re-read the same way the assets are."
+    ! [Disk.readText]
+    Web.Store.withPages(store, fresh("web/static/lobby.html", store.lobbyPage), fresh("web/static/game.html", store.gamePage))
+
+fn fresh(path: String, current: String) -> String
+    ? "A file caught half-written reads as an error, and the last good copy is kept rather than serving a truncated page."
+    ! [Disk.readText]
+    keep(Disk.readText(path), current)
+
+fn keep(read: Result<String, String>, current: String) -> String
+    ? "An unreadable file leaves what is already loaded in place."
+    match read
+        Result.Err(_) -> current
+        Result.Ok(text) -> text
 
 fn pollNext(node: Node, tick: Web.Router.Tick, ready: Result<List<Int>, String>) -> Result<Unit, String>
     ? "A poll failure closes every resource before the original error escapes."
-    ! [Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs]
+    ! [Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs, Disk.readText]
     match ready
         Result.Err(reason) -> fail(node, reason)
         Result.Ok(keys) -> continue(node, dispatch(node, tick, keys))
 
 fn continue(node: Node, next: Result<Node, DispatchFailure>) -> Result<Unit, String>
     ? "A per-session failure never kills the server; a listener failure still tears everything down."
-    ! [Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs]
+    ! [Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs, Disk.readText]
     match next
         Result.Err(failure) -> fail(failure.node, failure.reason)
         Result.Ok(updated) -> run(updated)
@@ -172,3 +201,7 @@ fn sockets(sessions: Map<Int, Session>, keys: List<Int>, acc: Map<Int, Tcp.Socke
 verify sockets
     sockets({}, [], {}) => {}
     sockets({}, [1, 2], {}) => {}
+
+verify keep
+    keep(Result.Ok("new"), "old") => "new"
+    keep(Result.Err("gone"), "old") => "old"

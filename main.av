@@ -8,13 +8,26 @@ module Main
 fn main() -> Result<Unit, String>
     ? "Reads the pages from disk once, then hands them to the serve loop inside the store."
     ! [Disk.readText, Env.get, Console.print, Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs]
-    boot(port(), Disk.readText("web/static/lobby.html")?, Disk.readText("web/static/game.html")?, Disk.readText("web/static/avgo.css")?, Disk.readText("web/static/lobby.js")?, Disk.readText("web/static/game.js")?)
+    boot(port(), devMode(), Disk.readText("web/static/lobby.html")?, Disk.readText("web/static/game.html")?, Disk.readText("web/static/avgo.css")?, Disk.readText("web/static/lobby.js")?, Disk.readText("web/static/game.js")?)
 
-fn boot(listenPort: Int, lobbyPage: String, gamePage: String, styles: String, lobbyScript: String, gameScript: String) -> Result<Unit, String>
+fn boot(listenPort: Int, reloading: Bool, lobbyPage: String, gamePage: String, styles: String, lobbyScript: String, gameScript: String) -> Result<Unit, String>
     ? "Announces the port and serves until a signal asks the loop to stop."
-    ! [Console.print, Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs]
+    ! [Console.print, Disk.readText, Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int, Time.unixMs]
     Console.print("avgo listening on port {listenPort}")
-    Web.Server.listen(listenPort, Web.Store.withAsset(Web.Store.withAsset(Web.Store.withAsset(Web.Store.empty(lobbyPage, gamePage), "avgo.css", styles, "text/css; charset=utf-8"), "lobby.js", lobbyScript, "text/javascript; charset=utf-8"), "game.js", gameScript, "text/javascript; charset=utf-8"))
+    announce(reloading)
+    Web.Server.listen(listenPort, Web.Store.withAsset(Web.Store.withAsset(Web.Store.withAsset(Web.Store.empty(lobbyPage, gamePage), "avgo.css", styles, "text/css; charset=utf-8"), "lobby.js", lobbyScript, "text/javascript; charset=utf-8"), "game.js", gameScript, "text/javascript; charset=utf-8"), reloading)
+
+fn announce(reloading: Bool) -> Unit
+    ? "Says so when the pages are being re-read, because it costs a little on every tick."
+    ! [Console.print]
+    match reloading
+        false -> Console.print("pages and assets loaded once; restart to pick up edits")
+        true -> Console.print("AVGO_DEV is set: pages and assets are re-read as they change")
+
+fn devMode() -> Bool
+    ? "AVGO_DEV turns on re-reading the pages from disk. It is a development convenience, off by default."
+    ! [Env.get]
+    Option.withDefault(Env.get("AVGO_DEV"), "") != ""
 
 fn port() -> Int
     ? "PORT from the environment, or 8080 when the container does not set one."

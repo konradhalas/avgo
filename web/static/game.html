@@ -60,8 +60,10 @@
       </form>
 
       <section class="chat" id="chat" hidden>
-        <ul class="chat-log" id="chatLog"></ul>
-        <p class="muted center chat-empty" id="chatEmpty">No messages yet.</p>
+        <div class="chat-body">
+          <ul class="chat-log" id="chatLog"></ul>
+          <p class="muted chat-empty" id="chatEmpty">No messages yet.</p>
+        </div>
         <!-- One field and no button: Enter submits the form on its own. -->
         <form id="chatForm" hidden>
           <input class="field chat-input" id="chatText" maxlength="200" required

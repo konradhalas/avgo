@@ -1,0 +1,22 @@
+module Main
+    intent =
+        "Entry point of the Go server: load the two pages, build an empty in-memory store, serve."
+        "Nothing is persisted, so every restart starts from zero games — the MVP contract."
+    depends [Web.Server, Web.Store]
+    effects [Disk.readText, Env.get, Console.print, Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int]
+
+fn main() -> Result<Unit, String>
+    ? "Reads the pages from disk once, then hands them to the serve loop inside the store."
+    ! [Disk.readText, Env.get, Console.print, Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int]
+    boot(port(), Disk.readText("web/static/lobby.html")?, Disk.readText("web/static/game.html")?)
+
+fn boot(listenPort: Int, lobbyPage: String, gamePage: String) -> Result<Unit, String>
+    ? "Announces the port and serves until a signal asks the loop to stop."
+    ! [Console.print, Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int]
+    Console.print("avgo listening on port {listenPort}")
+    Web.Server.listen(listenPort, Web.Store.empty(lobbyPage, gamePage))
+
+fn port() -> Int
+    ? "PORT from the environment, or 8080 when the container does not set one."
+    ! [Env.get]
+    Result.withDefault(Int.fromString(Option.withDefault(Env.get("PORT"), "8080")), 8080)

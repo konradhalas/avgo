@@ -1,0 +1,16 @@
+# Effect policy for the avgo server. Everything the program may touch is listed
+# here explicitly, so the runtime refuses anything the game does not need.
+
+[effects.Disk]
+paths = ["./web/static/**"]
+
+[effects.Tcp]
+connect_timeout_secs = 5
+request_idle_timeout_secs = 30
+max_connections = 256
+
+[[check.suppress]]
+slug = "perf-loop-invariant"
+files = ["web/server.av"]
+fn = "run"
+reason = "The node is rebuilt every tick — sessions are added and dropped and the store advances — so its session keys are genuinely new work on each call, not a hoistable constant."

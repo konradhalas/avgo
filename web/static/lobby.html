@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>avgo — Go</title>
+<style>
+  :root { color-scheme: light dark; --ink: #201a14; --paper: #f6f2e8; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #ece5d8; --paper: #17140f; } }
+  body {
+    margin: 0; min-height: 100vh;
+    display: grid; place-items: center;
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--paper); color: var(--ink);
+  }
+  main { text-align: center; padding: 2rem; max-width: 32rem; }
+  h1 { font-size: 2.5rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
+  p.lead { margin: 0 0 2rem; opacity: .7; }
+  button {
+    font: inherit; font-weight: 600;
+    padding: .8rem 1.6rem; border-radius: .6rem;
+    border: 1px solid var(--ink); background: transparent; color: var(--ink);
+    cursor: pointer;
+  }
+  button:hover { background: var(--ink); color: var(--paper); }
+  button[disabled] { opacity: .5; cursor: progress; }
+  .error { margin-top: 1rem; color: #b3261e; min-height: 1.5em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Go</h1>
+  <p class="lead">9&times;9. Create a game, send the link to one other person, and play.</p>
+  <button id="create">Create game</button>
+  <p class="error" id="error"></p>
+</main>
+<script>
+  const button = document.getElementById('create');
+  const error = document.getElementById('error');
+
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    error.textContent = '';
+    try {
+      const response = await fetch('/api/games', { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'could not create the game');
+      localStorage.setItem('avgo:' + data.id, data.token);
+      location.href = '/g/' + data.id;
+    } catch (failure) {
+      error.textContent = failure.message;
+      button.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

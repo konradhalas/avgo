@@ -1,0 +1,338 @@
+module Board
+    intent =
+        "Pure 9x9 Go board: liberties, captures, suicide rejection and area scoring."
+        "A board is a flat Vector of 81 cells holding 0 empty, 1 black, 2 white."
+    depends []
+    exposes [Placement, newBoard, opponent, place, render, scoreBoard]
+    effects []
+
+record Placement
+    board: Vector<Int>
+    captured: Int
+
+record Group
+    stones: Map<Int, Bool>
+    liberties: Map<Int, Bool>
+
+record Capture
+    board: Vector<Int>
+    captured: Int
+
+record Region
+    points: Map<Int, Bool>
+    touchesBlack: Bool
+    touchesWhite: Bool
+
+record Score
+    black: Int
+    white: Int
+
+record Scan
+    visited: Map<Int, Bool>
+    black: Int
+    white: Int
+
+fn size() -> Int
+    ? "Board edge length. The MVP ships a single board size."
+    9
+
+fn cells() -> Int
+    ? "Number of intersections on the board."
+    81
+
+fn newBoard() -> Vector<Int>
+    ? "An empty board: every intersection holds 0."
+    Vector.new(81, 0)
+
+fn opponent(color: Int) -> Int
+    ? "Black is 1, white is 2, and each is the other's opponent."
+    3 - color
+
+fn inRange(idx: Int) -> Bool
+    ? "Whether an index addresses a real intersection."
+    Bool.and(idx >= 0, idx < 81)
+
+fn cellAt(board: Vector<Int>, idx: Int) -> Int
+    ? "Stone colour at an index; an out-of-range index reads as empty."
+    Option.withDefault(Vector.get(board, idx), 0)
+
+fn setCell(board: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
+    ? "Writes one intersection; an out-of-range index leaves the board unchanged."
+    Option.withDefault(Vector.set(board, idx, value), board)
+
+fn neighbors(idx: Int) -> List<Int>
+    ? "The orthogonally adjacent intersections, clipped at the board edges."
+    List.concat(above(idx), List.concat(below(idx), List.concat(leftOf(idx), rightOf(idx))))
+
+fn above(idx: Int) -> List<Int>
+    ? "The intersection one row up, when there is one."
+    match Int.div(idx, 9) > 0
+        true -> [idx - 9]
+        false -> []
+
+fn below(idx: Int) -> List<Int>
+    ? "The intersection one row down, when there is one."
+    match Int.div(idx, 9) < 8
+        true -> [idx + 9]
+        false -> []
+
+fn leftOf(idx: Int) -> List<Int>
+    ? "The intersection one column left, when there is one."
+    match Int.mod(idx, 9) > 0
+        true -> [idx - 1]
+        false -> []
+
+fn rightOf(idx: Int) -> List<Int>
+    ? "The intersection one column right, when there is one."
+    match Int.mod(idx, 9) < 8
+        true -> [idx + 1]
+        false -> []
+
+fn groupAt(board: Vector<Int>, idx: Int, color: Int) -> Group
+    ? "The connected group of one colour containing an index, with its liberties."
+    walk(board, color, [idx], {}, {})
+
+fn walk(board: Vector<Int>, color: Int, frontier: List<Int>, stones: Map<Int, Bool>, liberties: Map<Int, Bool>) -> Group
+    ? "Breadth-first flood over same-coloured stones; already-seen stones are skipped."
+    match frontier
+        [] -> Group(stones = stones, liberties = liberties)
+        [idx, ..rest] -> match Map.has(stones, idx)
+            true -> walk(board, color, rest, stones, liberties)
+            false -> expand(board, color, rest, Map.set(stones, idx, true), liberties, neighbors(idx))
+
+fn expand(board: Vector<Int>, color: Int, frontier: List<Int>, stones: Map<Int, Bool>, liberties: Map<Int, Bool>, pending: List<Int>) -> Group
+    ? "Classifies the neighbours of the stone just added to the group."
+    match pending
+        [] -> walk(board, color, frontier, stones, liberties)
+        [n, ..rest] -> classify(board, color, frontier, stones, liberties, n, rest, cellAt(board, n))
+
+fn classify(board: Vector<Int>, color: Int, frontier: List<Int>, stones: Map<Int, Bool>, liberties: Map<Int, Bool>, n: Int, rest: List<Int>, value: Int) -> Group
+    ? "An empty neighbour is a liberty, a same-coloured one extends the group, an enemy one is ignored."
+    match value == 0
+        true -> expand(board, color, frontier, stones, Map.set(liberties, n, true), rest)
+        false -> match value == color
+            true -> expand(board, color, List.prepend(n, frontier), stones, liberties, rest)
+            false -> expand(board, color, frontier, stones, liberties, rest)
+
+fn clearStones(board: Vector<Int>, idxs: List<Int>) -> Vector<Int>
+    ? "Lifts every listed stone off the board."
+    match idxs
+        [] -> board
+        [i, ..rest] -> clearStones(setCell(board, i, 0), rest)
+
+fn captureAround(board: Vector<Int>, pending: List<Int>, opp: Int, removed: Int) -> Capture
+    ? "Removes every adjacent enemy group left without liberties by the placed stone."
+    match pending
+        [] -> Capture(board = board, captured = removed)
+        [n, ..rest] -> match cellAt(board, n) == opp
+            true -> captureGroup(board, rest, opp, removed, groupAt(board, n, opp))
+            false -> captureAround(board, rest, opp, removed)
+
+fn captureGroup(board: Vector<Int>, rest: List<Int>, opp: Int, removed: Int, found: Group) -> Capture
+    ? "A group with no liberties is captured; a group with liberties survives untouched."
+    match Map.len(found.liberties) == 0
+        true -> captureAround(clearStones(board, Map.keys(found.stones)), rest, opp, removed + Map.len(found.stones))
+        false -> captureAround(board, rest, opp, removed)
+
+fn place(board: Vector<Int>, idx: Int, color: Int) -> Result<Placement, String>
+    ? "Plays one stone, resolving captures first and rejecting suicide afterwards."
+    match inRange(idx)
+        false -> Result.Err("point is off the board")
+        true -> match cellAt(board, idx) == 0
+            false -> Result.Err("point is already occupied")
+            true -> resolve(idx, color, captureAround(setCell(board, idx, color), neighbors(idx), opponent(color), 0))
+
+fn resolve(idx: Int, color: Int, capture: Capture) -> Result<Placement, String>
+    ? "After captures the placed group must have at least one liberty of its own."
+    match Map.len(groupAt(capture.board, idx, color).liberties) == 0
+        true -> Result.Err("suicide is not allowed")
+        false -> Result.Ok(Placement(board = capture.board, captured = capture.captured))
+
+fn render(board: Vector<Int>) -> String
+    ? "Renders the board as the comma-separated cell list the browser consumes."
+    String.join(renderCells(List.fromVector(board), []), ",")
+
+fn renderCells(values: List<Int>, acc: List<String>) -> List<String>
+    ? "Accumulates cell digits in reverse, then restores board order."
+    match values
+        [] -> List.reverse(acc)
+        [c, ..rest] -> renderCells(rest, List.prepend(String.fromInt(c), acc))
+
+fn scoreBoard(board: Vector<Int>) -> Score
+    ? "Area score: own stones plus every empty region touching only that colour."
+    scanFrom(board, 0, Scan(visited = {}, black = 0, white = 0))
+
+fn scanFrom(board: Vector<Int>, idx: Int, acc: Scan) -> Score
+    ? "Walks every intersection once, expanding each unvisited empty region."
+    match idx >= 81
+        true -> Score(black = acc.black, white = acc.white)
+        false -> scanFrom(board, idx + 1, scanPoint(board, idx, acc, cellAt(board, idx)))
+
+fn scanPoint(board: Vector<Int>, idx: Int, acc: Scan, value: Int) -> Scan
+    ? "A stone scores for its own colour; an empty point may open a new region."
+    match value
+        1 -> Scan(visited = acc.visited, black = acc.black + 1, white = acc.white)
+        2 -> Scan(visited = acc.visited, black = acc.black, white = acc.white + 1)
+        _ -> match Map.has(acc.visited, idx)
+            true -> acc
+            false -> creditRegion(acc, floodEmpty(board, [idx], {}, false, false))
+
+fn creditRegion(acc: Scan, region: Region) -> Scan
+    ? "An empty region bordered by one colour only is that colour's territory."
+    match Bool.and(region.touchesBlack, Bool.not(region.touchesWhite))
+        true -> Scan(visited = mergeVisited(acc.visited, Map.keys(region.points)), black = acc.black + Map.len(region.points), white = acc.white)
+        false -> match Bool.and(region.touchesWhite, Bool.not(region.touchesBlack))
+            true -> Scan(visited = mergeVisited(acc.visited, Map.keys(region.points)), black = acc.black, white = acc.white + Map.len(region.points))
+            false -> Scan(visited = mergeVisited(acc.visited, Map.keys(region.points)), black = acc.black, white = acc.white)
+
+fn mergeVisited(visited: Map<Int, Bool>, idxs: List<Int>) -> Map<Int, Bool>
+    ? "Marks a whole region as accounted for so it is never scored twice."
+    match idxs
+        [] -> visited
+        [i, ..rest] -> mergeVisited(Map.set(visited, i, true), rest)
+
+fn floodEmpty(board: Vector<Int>, frontier: List<Int>, points: Map<Int, Bool>, touchesBlack: Bool, touchesWhite: Bool) -> Region
+    ? "Flood over connected empty points, recording which stone colours border them."
+    match frontier
+        [] -> Region(points = points, touchesBlack = touchesBlack, touchesWhite = touchesWhite)
+        [idx, ..rest] -> match Map.has(points, idx)
+            true -> floodEmpty(board, rest, points, touchesBlack, touchesWhite)
+            false -> expandEmpty(board, rest, Map.set(points, idx, true), touchesBlack, touchesWhite, neighbors(idx))
+
+fn expandEmpty(board: Vector<Int>, frontier: List<Int>, points: Map<Int, Bool>, touchesBlack: Bool, touchesWhite: Bool, pending: List<Int>) -> Region
+    ? "Classifies the neighbours of the empty point just added to the region."
+    match pending
+        [] -> floodEmpty(board, frontier, points, touchesBlack, touchesWhite)
+        [n, ..rest] -> classifyEmpty(board, frontier, points, touchesBlack, touchesWhite, n, rest, cellAt(board, n))
+
+fn classifyEmpty(board: Vector<Int>, frontier: List<Int>, points: Map<Int, Bool>, touchesBlack: Bool, touchesWhite: Bool, n: Int, rest: List<Int>, value: Int) -> Region
+    ? "An empty neighbour extends the region; a stone only records its colour as a border."
+    match value
+        0 -> expandEmpty(board, List.prepend(n, frontier), points, touchesBlack, touchesWhite, rest)
+        1 -> expandEmpty(board, frontier, points, true, touchesWhite, rest)
+        _ -> expandEmpty(board, frontier, points, touchesBlack, true, rest)
+
+verify size
+    size() => 9
+
+verify cells
+    cells() => 81
+
+verify opponent
+    opponent(1) => 2
+    opponent(2) => 1
+
+verify inRange
+    inRange(0) => true
+    inRange(80) => true
+    inRange(81) => false
+    inRange(0 - 1) => false
+
+verify neighbors
+    neighbors(0) => [9, 1]
+    neighbors(40) => [31, 49, 39, 41]
+    neighbors(80) => [71, 79]
+
+verify cellAt
+    cellAt(newBoard(), 0) => 0
+    cellAt(newBoard(), 500) => 0
+
+verify place
+    place(newBoard(), 81, 1) => Result.Err("point is off the board")
+    place(newBoard(), 0, 1) => Result.Ok(Placement(board = setCell(newBoard(), 0, 1), captured = 0))
+    place(setCell(newBoard(), 0, 1), 0, 2) => Result.Err("point is already occupied")
+    place(setCell(setCell(newBoard(), 1, 2), 9, 2), 0, 1) => Result.Err("suicide is not allowed")
+    place(setCell(setCell(newBoard(), 0, 2), 1, 1), 9, 1) => Result.Ok(Placement(board = setCell(setCell(newBoard(), 1, 1), 9, 1), captured = 1))
+
+verify render
+    render(Vector.fromList([0, 1, 2])) => "0,1,2"
+
+verify above
+    above(0) => []
+    above(9) => [0]
+
+verify below
+    below(0) => [9]
+    below(80) => []
+
+verify leftOf
+    leftOf(0) => []
+    leftOf(1) => [0]
+
+verify rightOf
+    rightOf(8) => []
+    rightOf(0) => [1]
+
+verify setCell
+    cellAt(setCell(newBoard(), 0, 2), 0) => 2
+    cellAt(setCell(newBoard(), 900, 2), 0) => 0
+
+verify groupAt
+    Map.len(groupAt(setCell(newBoard(), 0, 1), 0, 1).stones) => 1
+    Map.len(groupAt(setCell(newBoard(), 0, 1), 0, 1).liberties) => 2
+
+verify walk
+    Map.len(walk(newBoard(), 1, [], {}, {}).stones) => 0
+    Map.len(walk(setCell(newBoard(), 0, 1), 1, [0], {}, {}).stones) => 1
+
+verify expand
+    Map.len(expand(newBoard(), 1, [], {}, {}, []).stones) => 0
+    Map.len(expand(setCell(newBoard(), 0, 1), 1, [], {0 => true}, {}, [1]).liberties) => 1
+
+verify classify
+    Map.len(classify(newBoard(), 1, [], {}, {}, 1, [], 0).liberties) => 1
+    Map.len(classify(newBoard(), 1, [], {}, {}, 1, [], 2).liberties) => 0
+
+verify clearStones
+    cellAt(clearStones(setCell(newBoard(), 0, 1), [0]), 0) => 0
+    cellAt(clearStones(setCell(newBoard(), 0, 1), []), 0) => 1
+
+verify captureAround
+    captureAround(newBoard(), [], 2, 0).captured => 0
+    captureAround(setCell(setCell(newBoard(), 0, 2), 1, 1), [0], 2, 0).captured => 0
+
+verify captureGroup
+    captureGroup(newBoard(), [], 2, 0, Group(stones = {}, liberties = {})).captured => 0
+    captureGroup(newBoard(), [], 2, 0, Group(stones = {0 => true}, liberties = {1 => true})).captured => 0
+
+verify resolve
+    resolve(0, 1, Capture(board = setCell(newBoard(), 0, 1), captured = 0)) => Result.Ok(Placement(board = setCell(newBoard(), 0, 1), captured = 0))
+    resolve(0, 1, Capture(board = setCell(setCell(setCell(newBoard(), 0, 1), 1, 2), 9, 2), captured = 0)) => Result.Err("suicide is not allowed")
+
+verify renderCells
+    renderCells([], []) => []
+    renderCells([1, 2], []) => ["1", "2"]
+
+verify newBoard
+    Vector.len(newBoard()) => 81
+
+verify scoreBoard
+    scoreBoard(newBoard()) => Score(black = 0, white = 0)
+    scoreBoard(setCell(newBoard(), 0, 1)) => Score(black = 81, white = 0)
+
+verify scanFrom
+    scanFrom(newBoard(), 81, Scan(visited = {}, black = 3, white = 4)) => Score(black = 3, white = 4)
+
+verify scanPoint
+    scanPoint(newBoard(), 0, Scan(visited = {}, black = 0, white = 0), 1).black => 1
+    scanPoint(newBoard(), 0, Scan(visited = {}, black = 0, white = 0), 2).white => 1
+
+verify creditRegion
+    creditRegion(Scan(visited = {}, black = 0, white = 0), Region(points = {5 => true}, touchesBlack = true, touchesWhite = false)).black => 1
+    creditRegion(Scan(visited = {}, black = 0, white = 0), Region(points = {5 => true}, touchesBlack = true, touchesWhite = true)).black => 0
+
+verify mergeVisited
+    Map.len(mergeVisited({}, [1, 2])) => 2
+    Map.len(mergeVisited({}, [])) => 0
+
+verify floodEmpty
+    Map.len(floodEmpty(newBoard(), [], {}, false, false).points) => 0
+    Map.len(floodEmpty(newBoard(), [0], {}, false, false).points) => 81
+
+verify expandEmpty
+    Map.len(expandEmpty(newBoard(), [], {}, false, false, []).points) => 0
+    expandEmpty(setCell(newBoard(), 1, 1), [], {0 => true}, false, false, [1]).touchesBlack => true
+
+verify classifyEmpty
+    classifyEmpty(newBoard(), [], {}, false, false, 1, [], 1).touchesBlack => true
+    classifyEmpty(newBoard(), [], {}, false, false, 1, [], 2).touchesWhite => true

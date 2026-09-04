@@ -1,0 +1,58 @@
+# Deployment behind Traefik with automatic Let's Encrypt certificates.
+#
+#   AVGO_HOST=go.example.com ACME_EMAIL=you@example.com \
+#     docker compose -f docker-compose.traefik.yml up -d --build
+#
+# The game keeps every board in the process's memory, so this stack runs
+# exactly one replica. Scaling it out would hand each request to whichever
+# instance Traefik picked, and half the moves would land on a server that has
+# never heard of the game. Sticky sessions do not fix that either: the two
+# players are two different browsers, and they must reach the same process.
+
+services:
+  traefik:
+    image: traefik:v3.3
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.tlschallenge=true
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Read-only: Traefik only needs to watch container labels.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+    networks:
+      - edge
+
+  avgo:
+    build: .
+    image: avgo:latest
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+    # No published ports: Traefik reaches the container over the shared network.
+    networks:
+      - edge
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.avgo.rule=Host(`${AVGO_HOST}`)
+      - traefik.http.routers.avgo.entrypoints=websecure
+      - traefik.http.routers.avgo.tls.certresolver=le
+      - traefik.http.services.avgo.loadbalancer.server.port=8080
+    deploy:
+      replicas: 1
+
+networks:
+  edge:
+
+volumes:
+  letsencrypt:

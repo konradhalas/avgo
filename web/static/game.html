@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>avgo — game</title>
+<style>
+  :root { color-scheme: light dark; --ink: #201a14; --paper: #f6f2e8; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #ece5d8; --paper: #17140f; } }
+  body {
+    margin: 0; min-height: 100vh; padding: 1.5rem 1rem;
+    box-sizing: border-box;
+    display: flex; flex-direction: column; align-items: center; gap: 1rem;
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--paper); color: var(--ink);
+  }
+  h1 { font-size: 1.25rem; margin: 0; font-weight: 600; letter-spacing: -.01em; }
+  #status { min-height: 1.5em; text-align: center; }
+  #status b { font-weight: 600; }
+  canvas { border-radius: .4rem; touch-action: manipulation; cursor: pointer; max-width: 100%; height: auto; }
+  [hidden] { display: none !important; }
+  .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; justify-content: center; }
+  button {
+    font: inherit; padding: .5rem 1rem; border-radius: .5rem;
+    border: 1px solid currentColor; background: transparent; color: inherit; cursor: pointer;
+  }
+  button[disabled] { opacity: .4; cursor: default; }
+  .score { font-variant-numeric: tabular-nums; opacity: .8; font-size: .95rem; }
+  .error { color: #b3261e; min-height: 1.5em; text-align: center; }
+  .invite { display: flex; gap: .5rem; align-items: center; }
+  .invite input {
+    font: inherit; padding: .5rem; border-radius: .5rem; width: min(24rem, 70vw);
+    border: 1px solid currentColor; background: transparent; color: inherit;
+  }
+</style>
+</head>
+<body>
+  <h1 id="heading">Go</h1>
+  <p id="status">Loading&hellip;</p>
+  <canvas id="board" width="560" height="560"></canvas>
+  <div class="row">
+    <button id="pass" disabled>Pass</button>
+    <span class="score" id="score"></span>
+  </div>
+  <div class="row" id="inviteRow" hidden>
+    <span class="invite">
+      <input id="invite" readonly>
+      <button id="copy">Copy link</button>
+    </span>
+  </div>
+  <div class="row"><button id="join" hidden>Join game</button></div>
+  <p class="error" id="error"></p>
+
+<script>
+  const SIZE = 9;
+  const gameId = location.pathname.split('/').filter(Boolean)[1] || '';
+  const storageKey = 'avgo:' + gameId;
+
+  const canvas = document.getElementById('board');
+  const context = canvas.getContext('2d');
+  const statusLine = document.getElementById('status');
+  const scoreLine = document.getElementById('score');
+  const errorLine = document.getElementById('error');
+  const passButton = document.getElementById('pass');
+  const joinButton = document.getElementById('join');
+  const inviteRow = document.getElementById('inviteRow');
+  const inviteField = document.getElementById('invite');
+
+  let token = localStorage.getItem(storageKey) || '';
+  let state = null;
+
+  const headers = () => (token ? { 'x-player-token': token } : {});
+  const colorName = (n) => (n === 1 ? 'Black' : n === 2 ? 'White' : 'nobody');
+
+  function geometry() {
+    const pad = canvas.width / (SIZE + 1);
+    return { pad, step: (canvas.width - 2 * pad) / (SIZE - 1) };
+  }
+
+  function draw() {
+    const { pad, step } = geometry();
+    const w = canvas.width;
+
+    context.fillStyle = '#dcb35c';
+    context.fillRect(0, 0, w, w);
+
+    context.strokeStyle = 'rgba(0,0,0,.65)';
+    context.lineWidth = 1;
+    for (let i = 0; i < SIZE; i++) {
+      const at = pad + i * step;
+      context.beginPath();
+      context.moveTo(pad, at); context.lineTo(w - pad, at);
+      context.moveTo(at, pad); context.lineTo(at, w - pad);
+      context.stroke();
+    }
+
+    context.fillStyle = 'rgba(0,0,0,.7)';
+    for (const [r, c] of [[2, 2], [2, 6], [6, 2], [6, 6], [4, 4]]) {
+      context.beginPath();
+      context.arc(pad + c * step, pad + r * step, 3, 0, Math.PI * 2);
+      context.fill();
+    }
+
+    if (!state) return;
+    const cells = state.board.split(',').map(Number);
+    cells.forEach((value, index) => {
+      if (!value) return;
+      const x = pad + (index % SIZE) * step;
+      const y = pad + Math.floor(index / SIZE) * step;
+      context.beginPath();
+      context.arc(x, y, step * 0.45, 0, Math.PI * 2);
+      context.fillStyle = value === 1 ? '#141414' : '#fbfbf7';
+      context.fill();
+      context.strokeStyle = 'rgba(0,0,0,.55)';
+      context.stroke();
+    });
+  }
+
+  function render() {
+    draw();
+    if (!state) return;
+
+    const you = state.you;
+    const yourTurn = state.status === 'playing' && you !== 0 && you === state.turn;
+
+    document.getElementById('heading').textContent =
+      you === 0 ? 'Go — watching' : 'Go — you are ' + colorName(you);
+
+    if (state.status === 'waiting') {
+      statusLine.textContent = you === 0
+        ? 'This game is waiting for players.'
+        : 'Waiting for the other player to join.';
+    } else if (state.status === 'finished') {
+      const black = state.blackScore, white = state.whiteScore;
+      const verdict = black === white ? 'A draw.' : (black > white ? 'Black wins.' : 'White wins.');
+      statusLine.innerHTML = '<b>Game over.</b> ' + verdict;
+    } else {
+      statusLine.innerHTML = yourTurn
+        ? '<b>Your move.</b>'
+        : colorName(state.turn) + ' to play.';
+    }
+
+    scoreLine.textContent = state.status === 'finished'
+      ? 'Final score — Black ' + state.blackScore + ' · White ' + state.whiteScore
+      : 'Captures — Black ' + state.capturedByBlack + ' · White ' + state.capturedByWhite +
+        ' · move ' + state.moves;
+
+    passButton.disabled = !yourTurn;
+    joinButton.hidden = !(state.status === 'waiting' && you === 0);
+    inviteRow.hidden = !(state.status === 'waiting' && you !== 0);
+    inviteField.value = location.href;
+  }
+
+  async function call(path, options) {
+    const response = await fetch(path, options);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'request failed');
+    return data;
+  }
+
+  async function poll() {
+    try {
+      state = await call('/api/games/' + gameId, { headers: headers() });
+      errorLine.textContent = '';
+      render();
+    } catch (failure) {
+      errorLine.textContent = failure.message;
+    }
+  }
+
+  async function send(body) {
+    try {
+      state = await call('/api/games/' + gameId + '/move', {
+        method: 'POST',
+        headers: { ...headers(), 'content-type': 'application/x-www-form-urlencoded' },
+        body,
+      });
+      errorLine.textContent = '';
+      render();
+    } catch (failure) {
+      errorLine.textContent = failure.message;
+    }
+  }
+
+  canvas.addEventListener('click', (event) => {
+    if (!state || state.status !== 'playing' || state.you !== state.turn) return;
+    const rect = canvas.getBoundingClientRect();
+    const scale = canvas.width / rect.width;
+    const { pad, step } = geometry();
+    const col = Math.round(((event.clientX - rect.left) * scale - pad) / step);
+    const row = Math.round(((event.clientY - rect.top) * scale - pad) / step);
+    if (col < 0 || col >= SIZE || row < 0 || row >= SIZE) return;
+    send('idx=' + (row * SIZE + col));
+  });
+
+  passButton.addEventListener('click', () => send('pass=true'));
+
+  joinButton.addEventListener('click', async () => {
+    joinButton.disabled = true;
+    try {
+      const seat = await call('/api/games/' + gameId + '/join', { method: 'POST', headers: headers() });
+      token = seat.token;
+      localStorage.setItem(storageKey, token);
+      await poll();
+    } catch (failure) {
+      errorLine.textContent = failure.message;
+    }
+    joinButton.disabled = false;
+  });
+
+  document.getElementById('copy').addEventListener('click', () => {
+    navigator.clipboard?.writeText(location.href);
+    inviteField.select();
+  });
+
+  draw();
+  poll();
+  setInterval(poll, 1000);
+</script>
+</body>
+</html>

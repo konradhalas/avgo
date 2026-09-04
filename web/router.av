@@ -1,0 +1,317 @@
+module Router
+    intent =
+        "The whole HTTP surface as one pure function: a store and a request in, a new store and a response out."
+        "Keeping routing pure means every endpoint is directly verifiable without a socket."
+    depends [Go.Game, Go.Board, Web.Store]
+    exposes [Reply, handle]
+    effects []
+
+record Reply
+    store: Store
+    response: Http.Response
+
+fn handle(store: Store, entropy: Int, request: HttpRequest) -> Reply
+    ? "Routes one request. `entropy` is the randomness the socket loop drew for this tick."
+    route(store, entropy, request, String.split(request.path, "/"))
+
+fn route(store: Store, entropy: Int, request: HttpRequest, segments: List<String>) -> Reply
+    ? "Every path starts with a slash, so the first segment is always empty and is dropped."
+    match segments
+        [] -> notFound(store)
+        [_, ..rest] -> top(store, entropy, request, rest)
+
+fn top(store: Store, entropy: Int, request: HttpRequest, segments: List<String>) -> Reply
+    ? "The three top-level areas: the lobby, a game page, and the JSON API."
+    match segments
+        [] -> notFound(store)
+        [first, ..rest] -> match first
+            "" -> pageReply(store, store.lobbyPage)
+            "g" -> pageReply(store, store.gamePage)
+            "api" -> api(store, entropy, request, rest)
+            _ -> notFound(store)
+
+fn api(store: Store, entropy: Int, request: HttpRequest, segments: List<String>) -> Reply
+    ? "The API has exactly one collection."
+    match segments
+        [] -> notFound(store)
+        [first, ..rest] -> match first == "games"
+            false -> notFound(store)
+            true -> games(store, entropy, request, rest)
+
+fn games(store: Store, entropy: Int, request: HttpRequest, segments: List<String>) -> Reply
+    ? "POST /api/games creates a game; anything deeper addresses one existing game."
+    match segments
+        [] -> match request.method == "POST"
+            true -> create(store, entropy)
+            false -> refuse(store, 405, "use POST to create a game")
+        [id, ..rest] -> game(store, entropy, request, id, rest)
+
+fn game(store: Store, entropy: Int, request: HttpRequest, id: String, segments: List<String>) -> Reply
+    ? "Reading a game is a GET on the game itself; join and move are POSTs beneath it."
+    match segments
+        [] -> withGame(store, entropy, request, id, "state")
+        [action, ..rest] -> match action
+            "join" -> withGame(store, entropy, request, id, "join")
+            "move" -> withGame(store, entropy, request, id, "move")
+            _ -> notFound(store)
+
+fn withGame(store: Store, entropy: Int, request: HttpRequest, id: String, action: String) -> Reply
+    ? "Every game endpoint needs the game to exist before the action means anything."
+    match Web.Store.find(store, id)
+        Option.None -> refuse(store, 404, "no such game")
+        Option.Some(found) -> act(store, entropy, request, id, action, found, token(request))
+
+fn act(store: Store, entropy: Int, request: HttpRequest, id: String, action: String, found: Game, playerToken: String) -> Reply
+    ? "Dispatches the resolved game to the endpoint that was asked for."
+    match action
+        "state" -> stateReply(store, id, found, playerToken)
+        "join" -> joinReply(store, entropy, id, found, playerToken)
+        "move" -> moveReply(store, id, found, playerToken, request)
+        _ -> notFound(store)
+
+fn create(store: Store, entropy: Int) -> Reply
+    ? "Mints an id, a creator token and a drawn colour, and remembers the new game."
+    minted(store, Web.Store.mintId(entropy, store.counter), Web.Store.mintToken(entropy, store.counter), Web.Store.drawColor(entropy, store.counter))
+
+fn minted(store: Store, id: String, playerToken: String, color: Int) -> Reply
+    ? "The creator is told its id, its secret and its colour; the second seat stays open."
+    Reply(store = Web.Store.put(store, id, Go.Game.newGame(playerToken, color)), response = json(200, "{{\"id\":\"{id}\",\"token\":\"{playerToken}\",\"color\":{color}}}"))
+
+fn joinReply(store: Store, entropy: Int, id: String, found: Game, existingToken: String) -> Reply
+    ? "A browser already holding a seat re-joins as itself instead of taking the last seat twice."
+    match Go.Game.colorOf(found, existingToken) == 0
+        false -> seated(store, existingToken, Go.Game.colorOf(found, existingToken))
+        true -> joinFresh(store, id, found, Web.Store.mintToken(entropy, store.counter))
+
+fn joinFresh(store: Store, id: String, found: Game, playerToken: String) -> Reply
+    ? "Takes the open seat, or reports that both seats are gone."
+    match Go.Game.join(found, playerToken)
+        Result.Err(reason) -> refuse(store, 409, reason)
+        Result.Ok(joined) -> seated(Web.Store.put(store, id, joined), playerToken, Go.Game.colorOf(joined, playerToken))
+
+fn seated(store: Store, playerToken: String, color: Int) -> Reply
+    ? "Hands a browser the secret and the colour it now plays."
+    Reply(store = store, response = json(200, "{{\"token\":\"{playerToken}\",\"color\":{color}}}"))
+
+fn moveReply(store: Store, id: String, found: Game, playerToken: String, request: HttpRequest) -> Reply
+    ? "A move is either a pass or a point index; both are refused with a readable reason."
+    match formValue(request.body, "pass") == "true"
+        true -> applied(store, id, playerToken, Go.Game.pass(found, playerToken))
+        false -> placed(store, id, playerToken, found, Int.fromString(formValue(request.body, "idx")))
+
+fn placed(store: Store, id: String, playerToken: String, found: Game, idx: Result<Int, String>) -> Reply
+    ? "A point index that is not an integer never reaches the rules."
+    match idx
+        Result.Err(_) -> refuse(store, 400, "idx must be an integer")
+        Result.Ok(point) -> applied(store, id, playerToken, Go.Game.play(found, playerToken, point))
+
+fn applied(store: Store, id: String, playerToken: String, outcome: Result<Game, String>) -> Reply
+    ? "A refused move leaves the store untouched and says why; an accepted one replaces the game."
+    match outcome
+        Result.Err(reason) -> refuse(store, 409, reason)
+        Result.Ok(next) -> stateReply(Web.Store.put(store, id, next), id, next, playerToken)
+
+fn stateReply(store: Store, id: String, found: Game, playerToken: String) -> Reply
+    ? "The single JSON document the browser polls for."
+    Reply(store = store, response = json(200, stateJson(id, found, playerToken)))
+
+fn stateJson(id: String, found: Game, playerToken: String) -> String
+    ? "Everything a client needs to draw the board and know what it may do."
+    "{{\"id\":\"{id}\",\"status\":\"{Go.Game.status(found)}\",\"board\":\"{Go.Board.render(found.board)}\",\"turn\":{found.turn},\"you\":{Go.Game.colorOf(found, playerToken)},\"capturedByBlack\":{found.capturedByBlack},\"capturedByWhite\":{found.capturedByWhite},\"passes\":{found.passes},\"moves\":{found.moves},\"finished\":{String.fromBool(found.finished)},\"blackScore\":{Go.Game.blackScore(found)},\"whiteScore\":{Go.Game.whiteScore(found)}}}"
+
+fn token(incoming: HttpRequest) -> String
+    ? "The caller's secret. It travels in a header so that reads and writes carry it the same way."
+    firstNonEmpty(headerValue(incoming, "x-player-token"), formValue(incoming.body, "token"))
+
+fn headerValue(incoming: HttpRequest, name: String) -> String
+    ? "The first value of one header; a header the browser did not send reads as empty."
+    firstValue(Option.withDefault(Map.get(incoming.headers, name), []))
+
+fn firstValue(values: List<String>) -> String
+    ? "HTTP headers are multi-valued; only the first value is meaningful here."
+    match values
+        [] -> ""
+        [first, .._] -> first
+
+fn firstNonEmpty(primary: String, fallback: String) -> String
+    ? "Prefers the header, falls back to the body."
+    match primary == ""
+        true -> fallback
+        false -> primary
+
+fn formValue(source: String, key: String) -> String
+    ? "Reads one key out of an `a=1&b=2` string; a missing key reads as empty."
+    pickPair(String.split(source, "&"), key)
+
+fn pickPair(pairs: List<String>, key: String) -> String
+    ? "Walks the pairs in order and returns the first match."
+    match pairs
+        [] -> ""
+        [pair, ..rest] -> matchPair(key, rest, String.split(pair, "="))
+
+fn matchPair(key: String, rest: List<String>, parts: List<String>) -> String
+    ? "A pair is a name, an equals sign, and a value that may itself contain equals signs."
+    match parts
+        [] -> pickPair(rest, key)
+        [name, ..valueParts] -> match name == key
+            true -> String.join(valueParts, "=")
+            false -> pickPair(rest, key)
+
+fn pageReply(store: Store, body: String) -> Reply
+    ? "Serves one of the two static pages the server loaded at startup."
+    Reply(store = store, response = Http.Response(status = 200, body = body, headers = {"content-type" => ["text/html; charset=utf-8"]}))
+
+fn json(status: Int, body: String) -> Http.Response
+    ? "A JSON response the browser is never allowed to cache."
+    Http.Response(status = status, body = body, headers = {"content-type" => ["application/json; charset=utf-8"], "cache-control" => ["no-store"]})
+
+fn refuse(store: Store, status: Int, reason: String) -> Reply
+    ? "A refusal the client can show to the player verbatim."
+    Reply(store = store, response = json(status, "{{\"error\":\"{reason}\"}}"))
+
+fn notFound(store: Store) -> Reply
+    ? "Anything the router does not recognise."
+    refuse(store, 404, "not found")
+
+fn asRequest(method: String, path: String, query: String, body: String) -> HttpRequest
+    ? "Builds a header-free request, the shape the framer hands to the router."
+    HttpRequest(method = method, path = path, query = query, body = body, headers = {})
+
+fn withToken(incoming: HttpRequest, playerToken: String) -> HttpRequest
+    ? "Attaches a player secret to a request the way the browser does."
+    HttpRequest(method = incoming.method, path = incoming.path, query = "", body = incoming.body, headers = Map.set(incoming.headers, "x-player-token", [playerToken]))
+
+fn statusOf(reply: Reply) -> Int
+    ? "The status code a reply carries."
+    reply.response.status
+
+verify formValue
+    formValue("token=abc&idx=5", "token") => "abc"
+    formValue("token=abc&idx=5", "idx") => "5"
+    formValue("token=abc", "idx") => ""
+    formValue("", "idx") => ""
+
+verify firstNonEmpty
+    firstNonEmpty("a", "b") => "a"
+    firstNonEmpty("", "b") => "b"
+
+verify notFound
+    notFound(Web.Store.empty("l", "g")).response.status => 404
+
+verify asRequest
+    asRequest("GET", "/", "", "").method => "GET"
+    asRequest("GET", "/", "", "").path => "/"
+
+verify statusOf
+    statusOf(notFound(Web.Store.empty("l", "g"))) => 404
+
+verify handle
+    statusOf(handle(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""))) => 200
+    statusOf(handle(Web.Store.empty("l", "g"), 7, asRequest("GET", "/nope", "", ""))) => 404
+    handle(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", "")).response.body => "l"
+
+verify route
+    statusOf(route(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""), [])) => 404
+    statusOf(route(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""), ["", ""])) => 200
+
+verify top
+    statusOf(top(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""), [])) => 404
+    top(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""), [""]).response.body => "l"
+    top(Web.Store.empty("l", "g"), 7, asRequest("GET", "/g/x", "", ""), ["g", "x"]).response.body => "g"
+    statusOf(top(Web.Store.empty("l", "g"), 7, asRequest("GET", "/x", "", ""), ["x"])) => 404
+
+verify api
+    statusOf(api(Web.Store.empty("l", "g"), 7, asRequest("GET", "/api", "", ""), [])) => 404
+    statusOf(api(Web.Store.empty("l", "g"), 7, asRequest("GET", "/api/x", "", ""), ["x"])) => 404
+    statusOf(api(Web.Store.empty("l", "g"), 7, asRequest("POST", "/api/games", "", ""), ["games"])) => 200
+
+verify games
+    statusOf(games(Web.Store.empty("l", "g"), 7, asRequest("GET", "/api/games", "", ""), [])) => 405
+    statusOf(games(Web.Store.empty("l", "g"), 7, asRequest("POST", "/api/games", "", ""), [])) => 200
+    statusOf(games(Web.Store.empty("l", "g"), 7, asRequest("GET", "/api/games/x", "", ""), ["x"])) => 404
+
+verify game
+    statusOf(game(Web.Store.empty("l", "g"), 7, asRequest("GET", "/api/games/x", "", ""), "x", [])) => 404
+    statusOf(game(Web.Store.empty("l", "g"), 7, asRequest("POST", "/api/games/x/join", "", ""), "x", ["join"])) => 404
+    statusOf(game(Web.Store.empty("l", "g"), 7, asRequest("POST", "/api/games/x/bogus", "", ""), "x", ["bogus"])) => 404
+
+verify withGame
+    statusOf(withGame(Web.Store.empty("l", "g"), 7, asRequest("GET", "/api/games/x", "", ""), "x", "state")) => 404
+    statusOf(withGame(Web.Store.put(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1)), 7, withToken(asRequest("GET", "/api/games/x", "", ""), "t"), "x", "state")) => 200
+
+verify act
+    statusOf(act(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""), "x", "state", Go.Game.newGame("t", 1), "t")) => 200
+    statusOf(act(Web.Store.empty("l", "g"), 7, asRequest("GET", "/", "", ""), "x", "bogus", Go.Game.newGame("t", 1), "t")) => 404
+
+verify create
+    statusOf(create(Web.Store.empty("l", "g"), 7)) => 200
+    Map.len(create(Web.Store.empty("l", "g"), 7).store.games) => 1
+
+verify minted
+    Map.len(minted(Web.Store.empty("l", "g"), "id1", "tok", 1).store.games) => 1
+    minted(Web.Store.empty("l", "g"), "id1", "tok", 1).response.body => "{{\"id\":\"id1\",\"token\":\"tok\",\"color\":1}}"
+
+verify joinReply
+    statusOf(joinReply(Web.Store.empty("l", "g"), 7, "x", Go.Game.newGame("t", 1), "t")) => 200
+    statusOf(joinReply(Web.Store.empty("l", "g"), 7, "x", Go.Game.newGame("t", 1), "")) => 200
+
+verify joinFresh
+    statusOf(joinFresh(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1), "u")) => 200
+    statusOf(joinFresh(Web.Store.empty("l", "g"), "x", Result.withDefault(Go.Game.join(Go.Game.newGame("t", 1), "u"), Go.Game.newGame("t", 1)), "v")) => 409
+
+verify seated
+    statusOf(seated(Web.Store.empty("l", "g"), "tok", 2)) => 200
+    seated(Web.Store.empty("l", "g"), "tok", 2).response.body => "{{\"token\":\"tok\",\"color\":2}}"
+
+verify moveReply
+    statusOf(moveReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1), "t", asRequest("POST", "/", "", "idx=0"))) => 409
+    statusOf(moveReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1), "t", asRequest("POST", "/", "", "pass=true"))) => 409
+    statusOf(moveReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1), "t", asRequest("POST", "/", "", "idx=zz"))) => 400
+
+verify placed
+    statusOf(placed(Web.Store.empty("l", "g"), "x", "t", Go.Game.newGame("t", 1), Result.Err("bad"))) => 400
+    statusOf(placed(Web.Store.empty("l", "g"), "x", "t", Go.Game.newGame("t", 1), Result.Ok(0))) => 409
+
+verify applied
+    statusOf(applied(Web.Store.empty("l", "g"), "x", "t", Result.Err("nope"))) => 409
+    statusOf(applied(Web.Store.empty("l", "g"), "x", "t", Result.Ok(Go.Game.newGame("t", 1)))) => 200
+
+verify stateReply
+    statusOf(stateReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1), "t")) => 200
+
+verify stateJson
+    String.startsWith(stateJson("x", Go.Game.newGame("t", 1), "t"), "{{\"id\":\"x\",\"status\":\"waiting\"") => true
+    String.contains(stateJson("x", Go.Game.newGame("t", 1), "t"), "\"you\":1") => true
+
+verify token
+    token(withToken(asRequest("GET", "/", "", ""), "abc")) => "abc"
+    token(asRequest("POST", "/", "", "token=xyz")) => "xyz"
+    token(asRequest("POST", "/", "", "")) => ""
+
+verify headerValue
+    headerValue(withToken(asRequest("GET", "/", "", ""), "abc"), "x-player-token") => "abc"
+    headerValue(asRequest("GET", "/", "", ""), "x-player-token") => ""
+
+verify firstValue
+    firstValue([]) => ""
+    firstValue(["a", "b"]) => "a"
+
+verify withToken
+    withToken(asRequest("GET", "/", "", ""), "abc").method => "GET"
+
+verify pickPair
+    pickPair([], "k") => ""
+    pickPair(["k=v"], "k") => "v"
+
+verify matchPair
+    matchPair("k", [], ["k", "v"]) => "v"
+    matchPair("k", [], []) => ""
+
+verify pageReply
+    statusOf(pageReply(Web.Store.empty("l", "g"), "body")) => 200
+
+verify json
+    json(204, "x").status => 204
+
+verify refuse
+    statusOf(refuse(Web.Store.empty("l", "g"), 409, "no")) => 409

@@ -1,0 +1,58 @@
+module Store
+    intent =
+        "The whole server state: every live game plus the static pages, held in memory only."
+        "Nothing here is persisted; restarting the container forgets every game, which is the MVP contract."
+    depends [Go.Game, Bytes, Crypto.Digest32]
+    exposes [Store, empty, put, find, mintId, mintToken, drawColor]
+    effects []
+
+record Store
+    games: Map<String, Game>
+    counter: Int
+    lobbyPage: String
+    gamePage: String
+
+fn empty(lobbyPage: String, gamePage: String) -> Store
+    ? "A server that has served nothing yet, holding only the pages it will hand out."
+    Store(games = {}, counter = 0, lobbyPage = lobbyPage, gamePage = gamePage)
+
+fn put(store: Store, id: String, game: Game) -> Store
+    ? "Records a game under its id and advances the counter that keeps ids unique."
+    Store.update(store, games = Map.set(store.games, id, game), counter = store.counter + 1)
+
+fn find(store: Store, id: String) -> Option<Game>
+    ? "Looks one game up; an unknown id is an ordinary Option.None."
+    Map.get(store.games, id)
+
+fn mintId(entropy: Int, counter: Int) -> String
+    ? "A short unguessable game id: random per tick, unique per request through the counter."
+    String.slice(digest("game", entropy, counter), 0, 12)
+
+fn mintToken(entropy: Int, counter: Int) -> String
+    ? "A player's secret. Holding it is what makes a browser that colour's player."
+    String.slice(digest("token", entropy, counter), 0, 24)
+
+fn digest(label: String, entropy: Int, counter: Int) -> String
+    ? "SHA-256 over the label, the tick entropy and the request counter, as hex."
+    Crypto.Digest32.toHex(Crypto.sha256(String.toUtf8("{label}:{entropy}:{counter}")))
+
+fn drawColor(entropy: Int, counter: Int) -> Int
+    ? "Draws the creator's colour; the joining player gets whatever is left."
+    match Int.mod(entropy + counter, 2) == 0
+        true -> 1
+        false -> 2
+
+verify drawColor
+    drawColor(0, 0) => 1
+    drawColor(1, 0) => 2
+    drawColor(4, 1) => 2
+
+verify mintId
+    String.len(mintId(7, 3)) => 12
+
+verify mintToken
+    String.len(mintToken(7, 3)) => 24
+
+verify find
+    find(empty("a", "b"), "nope") => Option.None
+    find(put(empty("a", "b"), "x", Go.Game.newGame("t", 1)), "x") => Option.Some(Go.Game.newGame("t", 1))

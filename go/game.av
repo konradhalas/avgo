@@ -1,0 +1,197 @@
+module Game
+    intent =
+        "One in-memory game of Go: seat assignment, turn order, the simple ko rule and passing."
+        "Every transition is a pure function from a game to the next game or a refusal."
+    depends [Go.Board]
+    exposes [Game, newGame, join, status, colorOf, play, pass, blackScore, whiteScore]
+    effects []
+
+record Game
+    board: Vector<Int>
+    previous: String
+    turn: Int
+    blackToken: String
+    whiteToken: String
+    capturedByBlack: Int
+    capturedByWhite: Int
+    passes: Int
+    finished: Bool
+    moves: Int
+
+fn newGame(creatorToken: String, creatorColor: Int) -> Game
+    ? "Seats the creator on the drawn colour and leaves the other seat open."
+    match creatorColor == 1
+        true -> blank(creatorToken, "")
+        false -> blank("", creatorToken)
+
+fn blank(blackToken: String, whiteToken: String) -> Game
+    ? "An empty board with black to move, as Go always starts."
+    Game(board = Go.Board.newBoard(), previous = "", turn = 1, blackToken = blackToken, whiteToken = whiteToken, capturedByBlack = 0, capturedByWhite = 0, passes = 0, finished = false, moves = 0)
+
+fn ready(game: Game) -> Bool
+    ? "A game is playable once both seats are taken."
+    Bool.and(game.blackToken != "", game.whiteToken != "")
+
+fn status(game: Game) -> String
+    ? "The single word the browser uses to pick what to show."
+    match game.finished
+        true -> "finished"
+        false -> match ready(game)
+            true -> "playing"
+            false -> "waiting"
+
+fn colorOf(game: Game, token: String) -> Int
+    ? "The colour a token plays, or 0 for anyone merely watching."
+    match Bool.and(token != "", token == game.blackToken)
+        true -> 1
+        false -> match Bool.and(token != "", token == game.whiteToken)
+            true -> 2
+            false -> 0
+
+fn join(game: Game, token: String) -> Result<Game, String>
+    ? "Fills the open seat; a full game refuses further players."
+    match ready(game)
+        true -> Result.Err("game is already full")
+        false -> match game.blackToken == ""
+            true -> Result.Ok(Game.update(game, blackToken = token))
+            false -> Result.Ok(Game.update(game, whiteToken = token))
+
+fn play(game: Game, token: String, idx: Int) -> Result<Game, String>
+    ? "Plays one stone for the token's colour when it is that colour's turn."
+    match turnGuard(game, token)
+        Result.Err(reason) -> Result.Err(reason)
+        Result.Ok(color) -> commit(game, color, idx, Go.Board.place(game.board, idx, color))
+
+fn turnGuard(game: Game, token: String) -> Result<Int, String>
+    ? "Every reason a move can be refused before the board is even consulted."
+    match game.finished
+        true -> Result.Err("game is over")
+        false -> match ready(game)
+            false -> Result.Err("waiting for the second player")
+            true -> seatGuard(game, colorOf(game, token))
+
+fn seatGuard(game: Game, color: Int) -> Result<Int, String>
+    ? "Only a seated player may move, and only on their own turn."
+    match color == 0
+        true -> Result.Err("you are not a player in this game")
+        false -> match color == game.turn
+            false -> Result.Err("it is not your turn")
+            true -> Result.Ok(color)
+
+fn commit(game: Game, color: Int, idx: Int, placed: Result<Go.Board.Placement, String>) -> Result<Game, String>
+    ? "A legal placement still has to clear the simple ko rule before it is recorded."
+    match placed
+        Result.Err(reason) -> Result.Err(reason)
+        Result.Ok(placement) -> match Go.Board.render(placement.board) == game.previous
+            true -> Result.Err("ko: that move would repeat the previous position")
+            false -> Result.Ok(advance(game, color, placement))
+
+fn advance(game: Game, color: Int, placement: Go.Board.Placement) -> Game
+    ? "Records the move, the capture count for the mover, and hands over the turn."
+    Game.update(game, board = placement.board, previous = Go.Board.render(game.board), turn = Go.Board.opponent(color), capturedByBlack = game.capturedByBlack + blackShare(color, placement.captured), capturedByWhite = game.capturedByWhite + whiteShare(color, placement.captured), passes = 0, moves = game.moves + 1)
+
+fn blackShare(color: Int, captured: Int) -> Int
+    ? "Captures credited to black only when black made the move."
+    match color == 1
+        true -> captured
+        false -> 0
+
+fn whiteShare(color: Int, captured: Int) -> Int
+    ? "Captures credited to white only when white made the move."
+    match color == 2
+        true -> captured
+        false -> 0
+
+fn pass(game: Game, token: String) -> Result<Game, String>
+    ? "Passing hands over the turn; two passes in a row end the game."
+    match turnGuard(game, token)
+        Result.Err(reason) -> Result.Err(reason)
+        Result.Ok(color) -> Result.Ok(passed(game, color))
+
+fn passed(game: Game, color: Int) -> Game
+    ? "The second consecutive pass finishes the game."
+    total = game.passes + 1
+    Game.update(game, previous = "", turn = Go.Board.opponent(color), passes = total, finished = total >= 2, moves = game.moves + 1)
+
+fn blackScore(game: Game) -> Int
+    ? "Black's area score plus the stones black has captured."
+    Go.Board.scoreBoard(game.board).black + game.capturedByBlack
+
+fn whiteScore(game: Game) -> Int
+    ? "White's area score plus the stones white has captured."
+    Go.Board.scoreBoard(game.board).white + game.capturedByWhite
+
+verify newGame
+    newGame("t1", 1).blackToken => "t1"
+    newGame("t1", 1).whiteToken => ""
+    newGame("t1", 2).whiteToken => "t1"
+    newGame("t1", 2).blackToken => ""
+
+verify ready
+    ready(newGame("t1", 1)) => false
+    ready(blank("a", "b")) => true
+
+verify status
+    status(newGame("t1", 1)) => "waiting"
+    status(blank("a", "b")) => "playing"
+
+verify colorOf
+    colorOf(blank("a", "b"), "a") => 1
+    colorOf(blank("a", "b"), "b") => 2
+    colorOf(blank("a", "b"), "c") => 0
+    colorOf(blank("a", "b"), "") => 0
+
+verify join
+    join(blank("a", "b"), "c") => Result.Err("game is already full")
+    join(newGame("a", 1), "b") => Result.Ok(blank("a", "b"))
+
+verify play
+    play(newGame("a", 1), "a", 0) => Result.Err("waiting for the second player")
+    play(blank("a", "b"), "a", 0) => Result.Ok(advance(blank("a", "b"), 1, Result.withDefault(Go.Board.place(Go.Board.newBoard(), 0, 1), Go.Board.Placement(board = Go.Board.newBoard(), captured = 0))))
+    play(blank("a", "b"), "b", 0) => Result.Err("it is not your turn")
+    play(blank("a", "b"), "zz", 0) => Result.Err("you are not a player in this game")
+
+verify pass
+    pass(blank("a", "b"), "b") => Result.Err("it is not your turn")
+    pass(blank("a", "b"), "a") => Result.Ok(passed(blank("a", "b"), 1))
+
+verify blank
+    blank("a", "b").turn => 1
+    blank("a", "b").moves => 0
+
+verify turnGuard
+    turnGuard(blank("a", "b"), "a") => Result.Ok(1)
+    turnGuard(newGame("a", 1), "a") => Result.Err("waiting for the second player")
+    turnGuard(Game.update(blank("a", "b"), finished = true), "a") => Result.Err("game is over")
+
+verify seatGuard
+    seatGuard(blank("a", "b"), 0) => Result.Err("you are not a player in this game")
+    seatGuard(blank("a", "b"), 2) => Result.Err("it is not your turn")
+    seatGuard(blank("a", "b"), 1) => Result.Ok(1)
+
+verify commit
+    commit(blank("a", "b"), 1, 0, Result.Err("point is already occupied")) => Result.Err("point is already occupied")
+    commit(Game.update(blank("a", "b"), previous = Go.Board.render(Go.Board.newBoard())), 1, 0, Result.Ok(Go.Board.Placement(board = Go.Board.newBoard(), captured = 0))) => Result.Err("ko: that move would repeat the previous position")
+    commit(blank("a", "b"), 1, 0, Result.Ok(Go.Board.Placement(board = Go.Board.newBoard(), captured = 0))) => Result.Ok(advance(blank("a", "b"), 1, Go.Board.Placement(board = Go.Board.newBoard(), captured = 0)))
+
+verify advance
+    advance(blank("a", "b"), 1, Go.Board.Placement(board = Go.Board.newBoard(), captured = 2)).capturedByBlack => 2
+    advance(blank("a", "b"), 1, Go.Board.Placement(board = Go.Board.newBoard(), captured = 2)).turn => 2
+
+verify blackShare
+    blackShare(1, 3) => 3
+    blackShare(2, 3) => 0
+
+verify whiteShare
+    whiteShare(2, 3) => 3
+    whiteShare(1, 3) => 0
+
+verify passed
+    passed(blank("a", "b"), 1).passes => 1
+    passed(Game.update(blank("a", "b"), passes = 1), 2).finished => true
+
+verify blackScore
+    blackScore(blank("a", "b")) => 0
+
+verify whiteScore
+    whiteScore(blank("a", "b")) => 0

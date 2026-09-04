@@ -19,6 +19,11 @@ const joinButton = joinForm.querySelector('button');
 const inviteRow = document.getElementById('inviteRow');
 const inviteField = document.getElementById('invite');
 const seatsRow = document.getElementById('seats');
+const chatPanel = document.getElementById('chat');
+const chatLog = document.getElementById('chatLog');
+const chatEmpty = document.getElementById('chatEmpty');
+const chatForm = document.getElementById('chatForm');
+const chatText = document.getElementById('chatText');
 const seatEls = {
   1: document.getElementById('seatBlack'),
   2: document.getElementById('seatWhite'),
@@ -31,6 +36,7 @@ let lastPlaced = -1;
 let hovered = -1;
 let lastMoves = null;
 let lastPasses = null;
+let chatShown = '';
 
 const headers = () => (token ? { 'x-player-token': token } : {});
 const colorName = (n) => (n === 1 ? 'Black' : n === 2 ? 'White' : 'nobody');
@@ -207,6 +213,38 @@ function seat(color, name) {
   el.classList.toggle('is-open', !name);
 }
 
+function renderChat() {
+  const messages = state.messages || [];
+  // Rebuilding every second would fight the reader's scroll and selection, so
+  // the log is only redrawn when it actually changed.
+  const signature = messages.length + ':' + (messages.length ? messages[messages.length - 1].text : '');
+  chatPanel.hidden = false;
+  chatForm.hidden = state.you === 0;
+  chatEmpty.hidden = messages.length > 0;
+  if (signature === chatShown) return;
+  chatShown = signature;
+
+  // Only follow the conversation down if the reader was already at the bottom.
+  const atBottom = chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight < 24;
+
+  chatLog.textContent = '';
+  for (const message of messages) {
+    const line = document.createElement('li');
+    line.className = 'chat-line' + (message.color === 2 ? ' is-white' : '');
+    const who = document.createElement('b');
+    who.className = 'chat-who';
+    who.textContent = nameOf(message.color);
+    const said = document.createElement('span');
+    said.className = 'chat-text';
+    // Messages are other people's text, so they are written as text.
+    said.textContent = message.text;
+    line.append(who, said);
+    chatLog.append(line);
+  }
+
+  if (atBottom) chatLog.scrollTop = chatLog.scrollHeight;
+}
+
 function say(text, lead) {
   statusLine.textContent = '';
   if (lead) {
@@ -250,6 +288,7 @@ function render() {
     ? 'Final score — Black ' + state.blackScore + ' · White ' + state.whiteScore
     : 'move ' + state.moves;
 
+  renderChat();
   canvas.classList.toggle('is-playable', myTurn());
   passButton.disabled = !myTurn();
   joinForm.hidden = !(state.status === 'waiting' && you === 0);
@@ -339,6 +378,27 @@ joinForm.addEventListener('submit', async (event) => {
     errorLine.textContent = failure.message;
   }
   joinButton.disabled = false;
+});
+
+chatForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const said = chatText.value;
+  if (!said.trim()) return;
+  chatText.value = '';
+  try {
+    state = await call('/api/games/' + gameId + '/chat', {
+      method: 'POST',
+      headers: { ...headers(), 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'text=' + encodeURIComponent(said),
+    });
+    errorLine.textContent = '';
+    render();
+    chatLog.scrollTop = chatLog.scrollHeight;
+  } catch (failure) {
+    // Put the message back so a refusal does not eat what was typed.
+    chatText.value = said;
+    errorLine.textContent = failure.message;
+  }
 });
 
 document.getElementById('copy').addEventListener('click', () => {

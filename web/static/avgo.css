@@ -232,3 +232,27 @@ body {
 }
 
 .board:not(.is-playable) { cursor: default; }
+
+/* ----------------------------------------------------------------- chat -- */
+
+.chat { display: flex; flex-direction: column; gap: .8rem; }
+
+.chat-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: .3rem;
+  max-height: 12rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.chat-log:empty { display: none; }
+
+.chat-line { display: flex; gap: .45rem; align-items: baseline; }
+.chat-who { font-weight: 550; flex: none; }
+.chat-line.is-white .chat-who { color: var(--muted); }
+.chat-text { overflow-wrap: anywhere; }
+.chat-empty { margin: 0; font-size: .92rem; }

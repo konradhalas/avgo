@@ -88,6 +88,7 @@ header.
 | `POST /api/games/{id}/join` | Take the open seat. Body `name=<player>`. Returns `token`, `color` |
 | `GET /api/games/{id}` | Current state, including `you` for the caller |
 | `POST /api/games/{id}/move` | Body `idx=<0..80>` or `pass=true` |
+| `POST /api/games/{id}/chat` | Body `text=<message>`. Players only |
 
 Refusals — not your turn, occupied point, suicide, ko, a full game — come back
 as `{"error": "..."}` with a 4xx status and are shown to the player verbatim.
@@ -128,7 +129,9 @@ These are deliberate for an MVP:
 - Two passes end the game and area scoring decides it; there is no dead-stone
   agreement phase, so a game has to be played out.
 - Games are never evicted. A long-running server accumulates them.
-- The client polls once a second; there are no websockets.
+- The client polls once a second; there are no websockets. Chat rides that
+  same poll, so a message lands within a second, and the log is capped at 50
+  messages so the state document cannot grow without end.
 - `HttpRequest.query` is unreadable in the Aver 0.29.0 VM (it type-checks, then
   fails at runtime), which is why the player token is a header rather than a
   query parameter.

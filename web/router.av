@@ -68,6 +68,7 @@ fn game(store: Store, entropy: Int, request: HttpRequest, id: String, segments: 
         [action, ..rest] -> match action
             "join" -> withGame(store, entropy, request, id, "join")
             "move" -> withGame(store, entropy, request, id, "move")
+            "chat" -> withGame(store, entropy, request, id, "chat")
             _ -> notFound(store)
 
 fn withGame(store: Store, entropy: Int, request: HttpRequest, id: String, action: String) -> Reply
@@ -82,6 +83,7 @@ fn act(store: Store, entropy: Int, request: HttpRequest, id: String, action: Str
         "state" -> stateReply(store, id, found, playerToken)
         "join" -> joinReply(store, entropy, id, found, playerToken, request)
         "move" -> moveReply(store, id, found, playerToken, request)
+        "chat" -> chatReply(store, id, found, playerToken, request)
         _ -> notFound(store)
 
 fn create(store: Store, entropy: Int, request: HttpRequest) -> Reply
@@ -126,13 +128,57 @@ fn applied(store: Store, id: String, playerToken: String, outcome: Result<Game, 
         Result.Err(reason) -> refuse(store, 409, reason)
         Result.Ok(next) -> stateReply(Web.Store.put(store, id, next), id, next, playerToken)
 
+fn chatReply(store: Store, id: String, found: Game, playerToken: String, request: HttpRequest) -> Reply
+    ? "One line of chat. A refusal reads like any other, and success returns the whole state so the sender sees it at once."
+    applied(store, id, playerToken, Go.Game.say(found, playerToken, chatText(request.body)))
+
+fn chatText(body: String) -> String
+    ? "The message from a request body: decoded, stripped of control characters, and bounded."
+    String.slice(String.trim(stripControl(decode(formValue(body, "text")))), 0, 200)
+
+fn stripControl(text: String) -> String
+    ? "A control character would break the state document, and escaping one would still show as rubbish."
+    withKept(kept(Bytes.octets(String.toUtf8(text)), []), text)
+
+fn withKept(octets: List<Int>, fallback: String) -> String
+    ? "Filtering octets cannot invent invalid UTF-8, but the original text is kept if it somehow does."
+    match Bytes.fromList(octets)
+        Result.Err(_) -> fallback
+        Result.Ok(bytes) -> Result.withDefault(String.fromUtf8(bytes), fallback)
+
+fn kept(octets: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Drops C0 controls and DEL. Continuation bytes of multi-byte characters are all above them, so text survives."
+    match octets
+        [] -> List.reverse(acc)
+        [first, ..rest] -> match Bool.or(first < 32, first == 127)
+            true -> kept(rest, acc)
+            false -> kept(rest, List.prepend(first, acc))
+
+fn escapeJson(text: String) -> String
+    ? "A quote is ordinary in a message, so it is escaped rather than removed. Backslashes go first or they would double."
+    String.replace(String.replace(text, "\\", "\\\\"), "\"", "\\\"")
+
+fn chatJson(messages: List<Message>) -> String
+    ? "The message log, oldest first, as a JSON array."
+    "[" + String.join(chatEntries(List.reverse(messages), []), ",") + "]"
+
+fn chatEntries(messages: List<Message>, acc: List<String>) -> List<String>
+    ? "Renders each message in turn, keeping the order it was given."
+    match messages
+        [] -> List.reverse(acc)
+        [message, ..rest] -> chatEntries(rest, List.prepend(entryJson(message), acc))
+
+fn entryJson(message: Message) -> String
+    ? "One message: who said it, and what they said."
+    "{{\"color\":{message.color},\"text\":\"{escapeJson(message.text)}\"}}"
+
 fn stateReply(store: Store, id: String, found: Game, playerToken: String) -> Reply
     ? "The single JSON document the browser polls for."
     Reply(store = store, response = json(200, stateJson(id, found, playerToken)))
 
 fn stateJson(id: String, found: Game, playerToken: String) -> String
     ? "Everything a client needs to draw the board and know what it may do."
-    "{{\"id\":\"{id}\",\"status\":\"{Go.Game.status(found)}\",\"blackName\":\"{found.blackName}\",\"whiteName\":\"{found.whiteName}\",\"board\":\"{Go.Board.render(found.board)}\",\"turn\":{found.turn},\"you\":{Go.Game.colorOf(found, playerToken)},\"capturedByBlack\":{found.capturedByBlack},\"capturedByWhite\":{found.capturedByWhite},\"passes\":{found.passes},\"moves\":{found.moves},\"finished\":{String.fromBool(found.finished)},\"blackScore\":{Go.Game.blackScore(found)},\"whiteScore\":{Go.Game.whiteScore(found)}}}"
+    "{{\"id\":\"{id}\",\"status\":\"{Go.Game.status(found)}\",\"blackName\":\"{found.blackName}\",\"whiteName\":\"{found.whiteName}\",\"board\":\"{Go.Board.render(found.board)}\",\"turn\":{found.turn},\"you\":{Go.Game.colorOf(found, playerToken)},\"capturedByBlack\":{found.capturedByBlack},\"capturedByWhite\":{found.capturedByWhite},\"passes\":{found.passes},\"moves\":{found.moves},\"finished\":{String.fromBool(found.finished)},\"blackScore\":{Go.Game.blackScore(found)},\"whiteScore\":{Go.Game.whiteScore(found)},\"messages\":{chatJson(found.messages)}}}"
 
 fn token(incoming: HttpRequest) -> String
     ? "The caller's secret. It travels in a header so that reads and writes carry it the same way."
@@ -156,7 +202,7 @@ fn firstNonEmpty(primary: String, fallback: String) -> String
 
 fn playerName(body: String) -> String
     ? "The display name from a request body: decoded, stripped of what would break the state document, and bounded."
-    boundedName(String.trim(safeName(decode(formValue(body, "name")))))
+    boundedName(String.trim(safeName(stripControl(decode(formValue(body, "name"))))))
 
 fn safeName(raw: String) -> String
     ? "A quote or a backslash would break the JSON the browser polls; a newline or a tab would break the line it is shown on."
@@ -446,3 +492,44 @@ verify staticReply
 verify served
     statusOf(served(Web.Store.empty("l", "g"), Option.None)) => 404
     served(Web.Store.empty("l", "g"), Option.Some(Web.Store.Asset(body = "b", contentType = "text/css"))).response.body => "b"
+
+verify chatReply
+    statusOf(chatReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1, "Ada"), "t", asRequest("POST", "/", "", "text=hi"))) => 200
+    statusOf(chatReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1, "Ada"), "zz", asRequest("POST", "/", "", "text=hi"))) => 409
+    statusOf(chatReply(Web.Store.empty("l", "g"), "x", Go.Game.newGame("t", 1, "Ada"), "t", asRequest("POST", "/", "", "text="))) => 409
+
+verify chatText
+    chatText("text=hello") => "hello"
+    chatText("text=dobre+posuni%C4%99cie") => "dobre posunięcie"
+    chatText("text=%20%20") => ""
+    chatText("") => ""
+
+verify stripControl
+    stripControl("ok") => "ok"
+    stripControl("a\nb") => "ab"
+    stripControl("zażółć") => "zażółć"
+
+verify withKept
+    withKept([104, 105], "fallback") => "hi"
+    withKept([], "fallback") => ""
+
+verify kept
+    kept([], []) => []
+    kept([104, 10, 105], []) => [104, 105]
+
+verify escapeJson
+    escapeJson("plain") => "plain"
+    escapeJson("say \"hi\"") => "say \\\"hi\\\""
+    escapeJson("back\\slash") => "back\\\\slash"
+
+verify chatJson
+    chatJson([]) => "[]"
+    chatJson([Go.Game.Message(color = 1, text = "hi")]) => "[{{\"color\":1,\"text\":\"hi\"}}]"
+    chatJson([Go.Game.Message(color = 2, text = "b"), Go.Game.Message(color = 1, text = "a")]) => "[{{\"color\":1,\"text\":\"a\"}},{{\"color\":2,\"text\":\"b\"}}]"
+
+verify chatEntries
+    chatEntries([], []) => []
+    chatEntries([Go.Game.Message(color = 1, text = "hi")], []) => ["{{\"color\":1,\"text\":\"hi\"}}"]
+
+verify entryJson
+    entryJson(Go.Game.Message(color = 1, text = "hi")) => "{{\"color\":1,\"text\":\"hi\"}}"

@@ -45,6 +45,16 @@
     <button class="btn btn-primary" type="submit">Join game</button>
   </form>
 
+  <section class="card chat" id="chat" hidden>
+    <ul class="chat-log" id="chatLog"></ul>
+    <p class="muted center chat-empty" id="chatEmpty">No messages yet.</p>
+    <form class="row" id="chatForm" hidden>
+      <input class="field" id="chatText" maxlength="200" required
+             autocomplete="off" placeholder="Say something">
+      <button class="btn" type="submit">Send</button>
+    </form>
+  </section>
+
   <p class="error center" id="error"></p>
 
   <script src="/static/game.js"></script>

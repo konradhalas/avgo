@@ -96,6 +96,13 @@ jobs:
             -H "x-player-token: $black" -d 'idx=41' "$base/api/games/$id/move")
           test "$out_of_turn" = 409
 
+          # Chat is players only, and a quoted message must survive the wire.
+          curl -sf -X POST -H "x-player-token: $black" \
+            -d 'text=say+%22hi%22' "$base/api/games/$id/chat" >/dev/null
+          test "$(curl -sf "$base/api/games/$id" | jq -er '.messages[-1].text')" = 'say "hi"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -d 'text=hello' "$base/api/games/$id/chat")" = 409
+
           # A game nobody created does not exist.
           missing=$(curl -s -o /dev/null -w '%{http_code}' "$base/api/games/nope")
           test "$missing" = 404

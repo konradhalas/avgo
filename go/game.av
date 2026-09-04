@@ -3,11 +3,16 @@ module Game
         "One in-memory game of Go: seat assignment, turn order, the simple ko rule and passing."
         "Every transition is a pure function from a game to the next game or a refusal."
     depends [Go.Board]
-    exposes [Game, newGame, join, status, colorOf, play, pass, blackScore, whiteScore]
+    exposes [Game, Message, newGame, join, status, colorOf, play, pass, say, blackScore, whiteScore]
     effects []
+
+record Message
+    color: Int
+    text: String
 
 record Game
     board: Vector<Int>
+    messages: List<Message>
     blackName: String
     whiteName: String
     previous: String
@@ -28,7 +33,7 @@ fn newGame(creatorToken: String, creatorColor: Int, creatorName: String) -> Game
 
 fn blank(blackToken: String, whiteToken: String, blackName: String, whiteName: String) -> Game
     ? "An empty board with black to move, as Go always starts."
-    Game(board = Go.Board.newBoard(), blackName = blackName, whiteName = whiteName, previous = "", turn = 1, blackToken = blackToken, whiteToken = whiteToken, capturedByBlack = 0, capturedByWhite = 0, passes = 0, finished = false, moves = 0)
+    Game(board = Go.Board.newBoard(), messages = [], blackName = blackName, whiteName = whiteName, previous = "", turn = 1, blackToken = blackToken, whiteToken = whiteToken, capturedByBlack = 0, capturedByWhite = 0, passes = 0, finished = false, moves = 0)
 
 fn ready(game: Game) -> Bool
     ? "A game is playable once both seats are taken."
@@ -115,6 +120,22 @@ fn passed(game: Game, color: Int) -> Game
     total = game.passes + 1
     Game.update(game, previous = "", turn = Go.Board.opponent(color), passes = total, finished = total >= 2, moves = game.moves + 1)
 
+fn backlog() -> Int
+    ? "How many messages a game keeps. The whole log rides every poll, so it cannot grow without end."
+    50
+
+fn say(game: Game, token: String, text: String) -> Result<Game, String>
+    ? "Records one line of chat from a seated player."
+    spoken(game, colorOf(game, token), text)
+
+fn spoken(game: Game, color: Int, text: String) -> Result<Game, String>
+    ? "Only the two players may talk, and only with something to say."
+    match color == 0
+        true -> Result.Err("only the players can talk here")
+        false -> match text == ""
+            true -> Result.Err("a message cannot be empty")
+            false -> Result.Ok(Game.update(game, messages = List.take(List.prepend(Message(color = color, text = text), game.messages), backlog())))
+
 fn blackScore(game: Game) -> Int
     ? "Black's area score plus the stones black has captured."
     Go.Board.scoreBoard(game.board).black + game.capturedByBlack
@@ -200,3 +221,15 @@ verify blackScore
 
 verify whiteScore
     whiteScore(blank("a", "b", "Ada", "Bo")) => 0
+
+verify backlog
+    backlog() => 50
+
+verify say
+    say(blank("a", "b", "Ada", "Bo"), "zz", "hi") => Result.Err("only the players can talk here")
+    say(blank("a", "b", "Ada", "Bo"), "a", "") => Result.Err("a message cannot be empty")
+    say(blank("a", "b", "Ada", "Bo"), "a", "hi") => Result.Ok(Game.update(blank("a", "b", "Ada", "Bo"), messages = [Message(color = 1, text = "hi")]))
+
+verify spoken
+    spoken(blank("a", "b", "Ada", "Bo"), 0, "hi") => Result.Err("only the players can talk here")
+    spoken(blank("a", "b", "Ada", "Bo"), 2, "hi") => Result.Ok(Game.update(blank("a", "b", "Ada", "Bo"), messages = [Message(color = 2, text = "hi")]))

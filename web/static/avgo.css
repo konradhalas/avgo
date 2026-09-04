@@ -1,0 +1,234 @@
+/* avgo.css — the whole visual vocabulary of the site.
+   Tokens first, then a handful of components. Nothing here knows about Go;
+   the two pages compose these classes and add nothing of their own. */
+
+/* ---------------------------------------------------------------- tokens -- */
+
+:root {
+  color-scheme: light dark;
+
+  --paper: #f4efe4;
+  --raised: #fbf8f2;
+  --ink: #1d1813;
+  --muted: #6d6459;
+  --line: #ddd3c2;
+  --accent: #7a5c2e;
+  --danger: #a03626;
+
+  --wood: #dcb35c;
+  --wood-deep: #c9993f;
+  --grid: rgba(0, 0, 0, .58);
+  --stone-black: #17150f;
+  --stone-white: #fcfbf6;
+
+  --radius: .55rem;
+  --radius-lg: .9rem;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .05), 0 8px 24px -12px rgba(0, 0, 0, .18);
+
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --step-0: 1rem;
+  --step-1: 1.2rem;
+  --step-3: 2.6rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #14120e;
+    --raised: #1d1a15;
+    --ink: #ece5d8;
+    --muted: #9a9081;
+    --line: #332e26;
+    --accent: #d9b675;
+    --danger: #e08472;
+
+    --wood: #b98f43;
+    --wood-deep: #9d7733;
+    --grid: rgba(0, 0, 0, .5);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px -14px rgba(0, 0, 0, .8);
+  }
+}
+
+/* ------------------------------------------------------------------ base -- */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  padding: clamp(1.25rem, 4vw, 3rem) 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  font: var(--step-0)/1.55 var(--sans);
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* `.row` and friends set their own display, which would otherwise win. */
+[hidden] { display: none !important; }
+
+:where(a) { color: inherit; text-underline-offset: .2em; }
+
+:where(button, input):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------ structure -- */
+
+.masthead { text-align: center; }
+
+.brand {
+  margin: 0;
+  font-size: var(--step-3);
+  font-weight: 650;
+  letter-spacing: -.03em;
+}
+
+.tagline {
+  margin: .35rem 0 0;
+  color: var(--muted);
+}
+
+.card {
+  width: min(34rem, 100%);
+  padding: clamp(1.25rem, 4vw, 2rem);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.stack { display: flex; flex-direction: column; gap: 1rem; }
+.row {
+  display: flex;
+  gap: .6rem;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.center { text-align: center; }
+.muted { color: var(--muted); }
+.meta { color: var(--muted); font-size: .92rem; font-variant-numeric: tabular-nums; }
+.error { color: var(--danger); }
+/* An empty slot would otherwise hold open a gap nobody asked for. */
+.error:empty { display: none; }
+
+/* ------------------------------------------------------------- controls -- */
+
+.field {
+  font: inherit;
+  padding: .62rem .8rem;
+  min-width: 0;
+  flex: 1 1 12rem;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.field::placeholder { color: var(--muted); opacity: .8; }
+.field:focus { border-color: var(--accent); }
+
+.btn {
+  font: inherit;
+  font-weight: 550;
+  padding: .62rem 1.1rem;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background-color .12s ease, border-color .12s ease, opacity .12s ease;
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) { border-color: var(--ink); }
+
+.btn-primary {
+  color: var(--paper);
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+.btn-primary:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); }
+
+.btn:disabled { opacity: .45; cursor: default; }
+
+/* --------------------------------------------------------------- pieces -- */
+
+.stone {
+  width: .9rem;
+  height: .9rem;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+  background: radial-gradient(circle at 32% 28%, #58524a, var(--stone-black) 70%);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .35);
+}
+
+/* A white stone on pale paper needs its own edge to be a stone at all. */
+.stone-white {
+  background: radial-gradient(circle at 32% 28%, #ffffff, #e6dfcd 78%);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .28), 0 1px 2px rgba(0, 0, 0, .25);
+}
+
+.seats {
+  display: flex;
+  gap: 1.4rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.seat {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .3rem .7rem .3rem .55rem;
+  border: 1px solid transparent;
+  border-radius: 2rem;
+  opacity: .55;
+  transition: opacity .15s ease, border-color .15s ease, background-color .15s ease;
+}
+
+.seat.is-turn {
+  opacity: 1;
+  border-color: var(--line);
+  background: var(--raised);
+}
+
+.seat.is-open .seat-name { font-style: italic; }
+.seat-name { font-weight: 550; }
+.seat-you { color: var(--muted); font-size: .85rem; }
+
+/* Captures sit with the player who made them, not in a separate tally. */
+.seat-captures {
+  font-size: .82rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  padding: .05rem .4rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+}
+
+.seat-captures:empty { display: none; }
+
+.board-frame {
+  padding: clamp(.75rem, 3vw, 1.4rem);
+  background: linear-gradient(160deg, var(--wood), var(--wood-deep));
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, .3);
+  line-height: 0;
+}
+
+.board {
+  max-width: 100%;
+  height: auto;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+
+.board:not(.is-playable) { cursor: default; }

@@ -8,13 +8,13 @@ module Main
 fn main() -> Result<Unit, String>
     ? "Reads the pages from disk once, then hands them to the serve loop inside the store."
     ! [Disk.readText, Env.get, Console.print, Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int]
-    boot(port(), Disk.readText("web/static/lobby.html")?, Disk.readText("web/static/game.html")?)
+    boot(port(), Disk.readText("web/static/lobby.html")?, Disk.readText("web/static/game.html")?, Disk.readText("web/static/avgo.css")?, Disk.readText("web/static/lobby.js")?, Disk.readText("web/static/game.js")?)
 
-fn boot(listenPort: Int, lobbyPage: String, gamePage: String) -> Result<Unit, String>
+fn boot(listenPort: Int, lobbyPage: String, gamePage: String, styles: String, lobbyScript: String, gameScript: String) -> Result<Unit, String>
     ? "Announces the port and serves until a signal asks the loop to stop."
     ! [Console.print, Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested, Random.int]
     Console.print("avgo listening on port {listenPort}")
-    Web.Server.listen(listenPort, Web.Store.empty(lobbyPage, gamePage))
+    Web.Server.listen(listenPort, Web.Store.withAsset(Web.Store.withAsset(Web.Store.withAsset(Web.Store.empty(lobbyPage, gamePage), "avgo.css", styles, "text/css; charset=utf-8"), "lobby.js", lobbyScript, "text/javascript; charset=utf-8"), "game.js", gameScript, "text/javascript; charset=utf-8"))
 
 fn port() -> Int
     ? "PORT from the environment, or 8080 when the container does not set one."

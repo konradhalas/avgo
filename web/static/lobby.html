@@ -4,72 +4,25 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>avgo — Go</title>
-<style>
-  :root { color-scheme: light dark; --ink: #201a14; --paper: #f6f2e8; }
-  @media (prefers-color-scheme: dark) { :root { --ink: #ece5d8; --paper: #17140f; } }
-  body {
-    margin: 0; min-height: 100vh;
-    display: grid; place-items: center;
-    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
-    background: var(--paper); color: var(--ink);
-  }
-  main { text-align: center; padding: 2rem; max-width: 32rem; }
-  h1 { font-size: 2.5rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
-  p.lead { margin: 0 0 2rem; opacity: .7; }
-  button {
-    font: inherit; font-weight: 600;
-    padding: .8rem 1.6rem; border-radius: .6rem;
-    border: 1px solid var(--ink); background: transparent; color: var(--ink);
-    cursor: pointer;
-  }
-  button:hover { background: var(--ink); color: var(--paper); }
-  button[disabled] { opacity: .5; cursor: progress; }
-  form { display: flex; gap: .6rem; justify-content: center; flex-wrap: wrap; }
-  input {
-    font: inherit; padding: .8rem 1rem; border-radius: .6rem;
-    border: 1px solid var(--ink); background: transparent; color: var(--ink);
-    width: min(16rem, 60vw);
-  }
-  input::placeholder { color: var(--ink); opacity: .45; }
-  .error { margin-top: 1rem; color: #b3261e; min-height: 1.5em; }
-</style>
+<link rel="stylesheet" href="/static/avgo.css">
 </head>
 <body>
-<main>
-  <h1>Go</h1>
-  <p class="lead">9&times;9. Create a game, send the link to one other person, and play.</p>
-  <form id="create">
-    <input id="name" name="name" maxlength="24" required autocomplete="nickname"
-           autofocus placeholder="Your name">
-    <button type="submit">Create game</button>
-  </form>
-  <p class="error" id="error"></p>
-</main>
-<script>
-  const form = document.getElementById('create');
-  const nameField = document.getElementById('name');
-  const button = form.querySelector('button');
-  const error = document.getElementById('error');
+  <header class="masthead">
+    <h1 class="brand">Go</h1>
+    <p class="tagline">9&times;9. Create a game, send the link to one other person, and play.</p>
+  </header>
 
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    button.disabled = true;
-    error.textContent = '';
-    try {
-      const response = await fetch('/api/games', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: 'name=' + encodeURIComponent(nameField.value),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'could not create the game');
-      localStorage.setItem('avgo:' + data.id, data.token);
-      location.href = '/g/' + data.id;
-    } catch (failure) {
-      error.textContent = failure.message;
-      button.disabled = false;
-    }
-  });
-</script>
+  <main class="card">
+    <form class="stack" id="create">
+      <div class="row">
+        <input class="field" id="name" name="name" maxlength="24" required
+               autocomplete="nickname" autofocus placeholder="Your name">
+        <button class="btn btn-primary" type="submit">Create game</button>
+      </div>
+      <p class="error center" id="error"></p>
+    </form>
+  </main>
+
+  <script src="/static/lobby.js"></script>
 </body>
 </html>

@@ -4,344 +4,49 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>avgo — game</title>
-<style>
-  :root { color-scheme: light dark; --ink: #201a14; --paper: #f6f2e8; }
-  @media (prefers-color-scheme: dark) { :root { --ink: #ece5d8; --paper: #17140f; } }
-  body {
-    margin: 0; min-height: 100vh; padding: 1.5rem 1rem;
-    box-sizing: border-box;
-    display: flex; flex-direction: column; align-items: center; gap: 1rem;
-    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
-    background: var(--paper); color: var(--ink);
-  }
-  h1 { font-size: 1.25rem; margin: 0; font-weight: 600; letter-spacing: -.01em; }
-  #status { min-height: 1.5em; text-align: center; }
-  #status b { font-weight: 600; }
-  canvas { border-radius: .4rem; touch-action: manipulation; cursor: pointer; max-width: 100%; height: auto; }
-  [hidden] { display: none !important; }
-  .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; justify-content: center; }
-  button {
-    font: inherit; padding: .5rem 1rem; border-radius: .5rem;
-    border: 1px solid currentColor; background: transparent; color: inherit; cursor: pointer;
-  }
-  button[disabled] { opacity: .4; cursor: default; }
-  .score { font-variant-numeric: tabular-nums; opacity: .8; font-size: .95rem; }
-  .players { display: flex; gap: 1.6rem; flex-wrap: wrap; justify-content: center; }
-  .seat { display: inline-flex; align-items: center; gap: .45rem; opacity: .5; }
-  .seat.turn { opacity: 1; }
-  .seat .stone {
-    width: .85rem; height: .85rem; border-radius: 50%;
-    background: #141414; border: 1px solid var(--ink); display: inline-block;
-  }
-  .seat.white .stone { background: #fbfbf7; }
-  .seat.open .name { font-style: italic; }
-  .seat .mine { opacity: .6; }
-  form.row input {
-    font: inherit; padding: .5rem; border-radius: .5rem;
-    border: 1px solid currentColor; background: transparent; color: inherit;
-    width: min(14rem, 55vw);
-  }
-  form.row input::placeholder { color: currentColor; opacity: .45; }
-  .error { color: #b3261e; min-height: 1.5em; text-align: center; }
-  .invite { display: flex; gap: .5rem; align-items: center; }
-  .invite input {
-    font: inherit; padding: .5rem; border-radius: .5rem; width: min(24rem, 70vw);
-    border: 1px solid currentColor; background: transparent; color: inherit;
-  }
-</style>
+<link rel="stylesheet" href="/static/avgo.css">
 </head>
 <body>
-  <h1 id="heading">Go</h1>
-  <div class="players" id="players" hidden>
-    <span class="seat" id="seatBlack"><i class="stone"></i><b class="name"></b><span class="mine"></span></span>
-    <span class="seat white" id="seatWhite"><i class="stone"></i><b class="name"></b><span class="mine"></span></span>
+  <header class="masthead stack">
+    <div class="seats" id="seats" hidden>
+      <span class="seat" id="seatBlack">
+        <i class="stone"></i>
+        <span class="seat-name"></span>
+        <span class="seat-you"></span>
+        <span class="seat-captures" title="stones captured"></span>
+      </span>
+      <span class="seat" id="seatWhite">
+        <i class="stone stone-white"></i>
+        <span class="seat-name"></span>
+        <span class="seat-you"></span>
+        <span class="seat-captures" title="stones captured"></span>
+      </span>
+    </div>
+    <p class="center" id="status">Loading&hellip;</p>
+  </header>
+
+  <div class="board-frame">
+    <canvas class="board" id="board" width="560" height="560"></canvas>
   </div>
-  <p id="status">Loading&hellip;</p>
-  <canvas id="board" width="560" height="560"></canvas>
+
   <div class="row">
-    <button id="pass" disabled>Pass</button>
-    <span class="score" id="score"></span>
+    <button class="btn" id="pass" disabled>Pass</button>
+    <span class="meta" id="score"></span>
   </div>
+
   <div class="row" id="inviteRow" hidden>
-    <span class="invite">
-      <input id="invite" readonly>
-      <button id="copy">Copy link</button>
-    </span>
+    <input class="field" id="invite" readonly aria-label="Invite link">
+    <button class="btn" id="copy">Copy link</button>
   </div>
+
   <form class="row" id="joinForm" hidden>
-    <input id="joinName" maxlength="24" required autocomplete="nickname" placeholder="Your name">
-    <button type="submit">Join game</button>
+    <input class="field" id="joinName" maxlength="24" required
+           autocomplete="nickname" placeholder="Your name">
+    <button class="btn btn-primary" type="submit">Join game</button>
   </form>
-  <p class="error" id="error"></p>
 
-<script>
-  const SIZE = 9;
-  const gameId = location.pathname.split('/').filter(Boolean)[1] || '';
-  const storageKey = 'avgo:' + gameId;
+  <p class="error center" id="error"></p>
 
-  const canvas = document.getElementById('board');
-  const context = canvas.getContext('2d');
-  const statusLine = document.getElementById('status');
-  const scoreLine = document.getElementById('score');
-  const errorLine = document.getElementById('error');
-  const passButton = document.getElementById('pass');
-  const joinForm = document.getElementById('joinForm');
-  const joinName = document.getElementById('joinName');
-  const joinButton = joinForm.querySelector('button');
-  const players = document.getElementById('players');
-  const seats = { 1: document.getElementById('seatBlack'), 2: document.getElementById('seatWhite') };
-  const inviteRow = document.getElementById('inviteRow');
-  const inviteField = document.getElementById('invite');
-
-  let token = localStorage.getItem(storageKey) || '';
-  let state = null;
-  let lastMoves = null;
-  let lastPasses = null;
-
-  // The stone sound is synthesised rather than loaded, so the server still has
-  // only two things to serve and no audio file has to travel with the page.
-  let audio = null;
-
-  function unlockAudio() {
-    try {
-      if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
-      if (audio.state === 'suspended') audio.resume();
-    } catch (unsupported) {
-      audio = null;
-    }
-  }
-
-  // Browsers keep an audio context suspended until the page has been touched,
-  // so the first gesture — clicking the board, joining — is what enables sound.
-  document.addEventListener('pointerdown', unlockAudio);
-  document.addEventListener('keydown', unlockAudio);
-
-  function playStone() {
-    if (!audio || audio.state !== 'running') return;
-    const now = audio.currentTime;
-
-    // The clack: a short burst of noise, band-passed to sound like slate on wood.
-    const samples = Math.floor(audio.sampleRate * 0.05);
-    const buffer = audio.createBuffer(1, samples, audio.sampleRate);
-    const channel = buffer.getChannelData(0);
-    for (let i = 0; i < samples; i++) {
-      channel[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / samples, 6);
-    }
-    const noise = audio.createBufferSource();
-    noise.buffer = buffer;
-    const band = audio.createBiquadFilter();
-    band.type = 'bandpass';
-    band.frequency.value = 1900;
-    band.Q.value = 0.9;
-    const noiseGain = audio.createGain();
-    noiseGain.gain.setValueAtTime(0.35, now);
-    noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
-    noise.connect(band).connect(noiseGain).connect(audio.destination);
-    noise.start(now);
-
-    // The body underneath it, so the click has some wood in it.
-    const thock = audio.createOscillator();
-    thock.type = 'triangle';
-    thock.frequency.setValueAtTime(340, now);
-    thock.frequency.exponentialRampToValueAtTime(120, now + 0.05);
-    const thockGain = audio.createGain();
-    thockGain.gain.setValueAtTime(0.18, now);
-    thockGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
-    thock.connect(thockGain).connect(audio.destination);
-    thock.start(now);
-    thock.stop(now + 0.09);
-  }
-
-  function soundMoves() {
-    // Both players' stones arrive the same way: the move count went up. A pass
-    // also advances that count, so it is told apart by its own counter rising.
-    if (lastMoves !== null && state.moves > lastMoves && state.passes <= lastPasses) {
-      playStone();
-    }
-    lastMoves = state.moves;
-    lastPasses = state.passes;
-  }
-
-  const headers = () => (token ? { 'x-player-token': token } : {});
-  const colorName = (n) => (n === 1 ? 'Black' : n === 2 ? 'White' : 'nobody');
-
-  function geometry() {
-    const pad = canvas.width / (SIZE + 1);
-    return { pad, step: (canvas.width - 2 * pad) / (SIZE - 1) };
-  }
-
-  function draw() {
-    const { pad, step } = geometry();
-    const w = canvas.width;
-
-    context.fillStyle = '#dcb35c';
-    context.fillRect(0, 0, w, w);
-
-    context.strokeStyle = 'rgba(0,0,0,.65)';
-    context.lineWidth = 1;
-    for (let i = 0; i < SIZE; i++) {
-      const at = pad + i * step;
-      context.beginPath();
-      context.moveTo(pad, at); context.lineTo(w - pad, at);
-      context.moveTo(at, pad); context.lineTo(at, w - pad);
-      context.stroke();
-    }
-
-    context.fillStyle = 'rgba(0,0,0,.7)';
-    for (const [r, c] of [[2, 2], [2, 6], [6, 2], [6, 6], [4, 4]]) {
-      context.beginPath();
-      context.arc(pad + c * step, pad + r * step, 3, 0, Math.PI * 2);
-      context.fill();
-    }
-
-    if (!state) return;
-    const cells = state.board.split(',').map(Number);
-    cells.forEach((value, index) => {
-      if (!value) return;
-      const x = pad + (index % SIZE) * step;
-      const y = pad + Math.floor(index / SIZE) * step;
-      context.beginPath();
-      context.arc(x, y, step * 0.45, 0, Math.PI * 2);
-      context.fillStyle = value === 1 ? '#141414' : '#fbfbf7';
-      context.fill();
-      context.strokeStyle = 'rgba(0,0,0,.55)';
-      context.stroke();
-    });
-  }
-
-  function render() {
-    draw();
-    if (!state) return;
-    soundMoves();
-
-    const you = state.you;
-    const yourTurn = state.status === 'playing' && you !== 0 && you === state.turn;
-
-    players.hidden = false;
-    seat(1, state.blackName);
-    seat(2, state.whiteName);
-
-    if (state.status === 'waiting') {
-      say(you === 0
-        ? 'This game is waiting for a second player.'
-        : 'Waiting for the other player to join.');
-    } else if (state.status === 'finished') {
-      const black = state.blackScore, white = state.whiteScore;
-      const verdict = black === white
-        ? 'A draw.'
-        : (black > white ? state.blackName : state.whiteName) + ' wins.';
-      say(verdict, 'Game over.');
-    } else if (yourTurn) {
-      say('', 'Your move.');
-    } else {
-      say(nameOf(state.turn) + ' to play.');
-    }
-
-    scoreLine.textContent = state.status === 'finished'
-      ? 'Final score — Black ' + state.blackScore + ' · White ' + state.whiteScore
-      : 'Captures — Black ' + state.capturedByBlack + ' · White ' + state.capturedByWhite +
-        ' · move ' + state.moves;
-
-    passButton.disabled = !yourTurn;
-    joinForm.hidden = !(state.status === 'waiting' && you === 0);
-    inviteRow.hidden = !(state.status === 'waiting' && you !== 0);
-    inviteField.value = location.href;
-  }
-
-  function nameOf(color) {
-    return (color === 1 ? state.blackName : state.whiteName) || colorName(color);
-  }
-
-  function seat(color, name) {
-    // Names come from other people, so they are written as text, never as markup.
-    const el = seats[color];
-    el.querySelector('.name').textContent = name || 'open seat';
-    el.querySelector('.mine').textContent = state.you === color ? '(you)' : '';
-    el.classList.toggle('turn', state.status === 'playing' && state.turn === color);
-    el.classList.toggle('open', !name);
-  }
-
-  function say(text, lead) {
-    statusLine.textContent = '';
-    if (lead) {
-      const strong = document.createElement('b');
-      strong.textContent = lead;
-      statusLine.append(strong, text ? ' ' + text : '');
-    } else {
-      statusLine.textContent = text;
-    }
-  }
-
-  async function call(path, options) {
-    const response = await fetch(path, options);
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'request failed');
-    return data;
-  }
-
-  async function poll() {
-    try {
-      state = await call('/api/games/' + gameId, { headers: headers() });
-      errorLine.textContent = '';
-      render();
-    } catch (failure) {
-      errorLine.textContent = failure.message;
-    }
-  }
-
-  async function send(body) {
-    try {
-      state = await call('/api/games/' + gameId + '/move', {
-        method: 'POST',
-        headers: { ...headers(), 'content-type': 'application/x-www-form-urlencoded' },
-        body,
-      });
-      errorLine.textContent = '';
-      render();
-    } catch (failure) {
-      errorLine.textContent = failure.message;
-    }
-  }
-
-  canvas.addEventListener('click', (event) => {
-    if (!state || state.status !== 'playing' || state.you !== state.turn) return;
-    const rect = canvas.getBoundingClientRect();
-    const scale = canvas.width / rect.width;
-    const { pad, step } = geometry();
-    const col = Math.round(((event.clientX - rect.left) * scale - pad) / step);
-    const row = Math.round(((event.clientY - rect.top) * scale - pad) / step);
-    if (col < 0 || col >= SIZE || row < 0 || row >= SIZE) return;
-    send('idx=' + (row * SIZE + col));
-  });
-
-  passButton.addEventListener('click', () => send('pass=true'));
-
-  joinForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    joinButton.disabled = true;
-    try {
-      const taken = await call('/api/games/' + gameId + '/join', {
-        method: 'POST',
-        headers: { ...headers(), 'content-type': 'application/x-www-form-urlencoded' },
-        body: 'name=' + encodeURIComponent(joinName.value),
-      });
-      token = taken.token;
-      localStorage.setItem(storageKey, token);
-      await poll();
-    } catch (failure) {
-      errorLine.textContent = failure.message;
-    }
-    joinButton.disabled = false;
-  });
-
-  document.getElementById('copy').addEventListener('click', () => {
-    navigator.clipboard?.writeText(location.href);
-    inviteField.select();
-  });
-
-  draw();
-  poll();
-  setInterval(poll, 1000);
-</script>
+  <script src="/static/game.js"></script>
 </body>
 </html>

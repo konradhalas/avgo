@@ -3,7 +3,7 @@ module Store
         "The whole server state: every live game plus the static pages, held in memory only."
         "Nothing here is persisted; restarting the container forgets every game, which is the MVP contract."
     depends [Go.Game, Bytes, Crypto.Digest32]
-    exposes [Store, empty, put, find, mintId, mintToken, drawColor]
+    exposes [Store, Asset, empty, put, find, withAsset, asset, mintId, mintToken, drawColor]
     effects []
 
 record Store
@@ -11,10 +11,15 @@ record Store
     counter: Int
     lobbyPage: String
     gamePage: String
+    assets: Map<String, Asset>
+
+record Asset
+    body: String
+    contentType: String
 
 fn empty(lobbyPage: String, gamePage: String) -> Store
     ? "A server that has served nothing yet, holding only the pages it will hand out."
-    Store(games = {}, counter = 0, lobbyPage = lobbyPage, gamePage = gamePage)
+    Store(games = {}, counter = 0, lobbyPage = lobbyPage, gamePage = gamePage, assets = {})
 
 fn put(store: Store, id: String, game: Game) -> Store
     ? "Records a game under its id and advances the counter that keeps ids unique."
@@ -23,6 +28,14 @@ fn put(store: Store, id: String, game: Game) -> Store
 fn find(store: Store, id: String) -> Option<Game>
     ? "Looks one game up; an unknown id is an ordinary Option.None."
     Map.get(store.games, id)
+
+fn withAsset(store: Store, name: String, body: String, contentType: String) -> Store
+    ? "Remembers one stylesheet or script, read from disk once at startup."
+    Store.update(store, assets = Map.set(store.assets, name, Asset(body = body, contentType = contentType)))
+
+fn asset(store: Store, name: String) -> Option<Asset>
+    ? "Looks one asset up by its bare file name; an unknown name is an ordinary Option.None."
+    Map.get(store.assets, name)
 
 fn mintId(entropy: Int, counter: Int) -> String
     ? "A short unguessable game id: random per tick, unique per request through the counter."
@@ -56,3 +69,11 @@ verify mintToken
 verify find
     find(empty("a", "b"), "nope") => Option.None
     find(put(empty("a", "b"), "x", Go.Game.newGame("t", 1, "Ada")), "x") => Option.Some(Go.Game.newGame("t", 1, "Ada"))
+
+verify withAsset
+    asset(withAsset(empty("l", "g"), "avgo.css", "body {}", "text/css"), "avgo.css") => Option.Some(Asset(body = "body {}", contentType = "text/css"))
+
+verify asset
+    asset(empty("l", "g"), "avgo.css") => Option.None
+    asset(withAsset(empty("l", "g"), "avgo.css", "b", "text/css"), "nope.css") => Option.None
+    asset(withAsset(empty("l", "g"), "avgo.css", "b", "text/css"), "avgo.css") => Option.Some(Asset(body = "b", contentType = "text/css"))

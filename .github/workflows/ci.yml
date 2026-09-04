@@ -62,6 +62,11 @@ jobs:
 
           curl -sf "$base/" >/dev/null
 
+          # The stylesheet and both scripts are served from the store too.
+          for asset in avgo.css lobby.js game.js; do
+            curl -sf "$base/static/$asset" >/dev/null
+          done
+
           created=$(curl -sf -X POST -d 'name=Ada+Lovelace' "$base/api/games")
           id=$(jq -er .id <<<"$created")
           creator_token=$(jq -er .token <<<"$created")

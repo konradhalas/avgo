@@ -28,7 +28,22 @@ fn top(store: Store, entropy: Int, request: HttpRequest, segments: List<String>)
             "" -> pageReply(store, store.lobbyPage)
             "g" -> pageReply(store, store.gamePage)
             "api" -> api(store, entropy, request, rest)
+            "static" -> staticReply(store, rest)
             _ -> notFound(store)
+
+fn staticReply(store: Store, segments: List<String>) -> Reply
+    ? "Serves one of the assets loaded at startup. Names are matched against that map, so there is no path to walk out of."
+    match segments
+        [] -> notFound(store)
+        [name, ..rest] -> match rest
+            [] -> served(store, Web.Store.asset(store, name))
+            [_, .._] -> notFound(store)
+
+fn served(store: Store, found: Option<Asset>) -> Reply
+    ? "An asset the browser may keep, but must revalidate, so an edit is never served stale."
+    match found
+        Option.None -> refuse(store, 404, "no such asset")
+        Option.Some(file) -> Reply(store = store, response = Http.Response(status = 200, body = file.body, headers = {"content-type" => [file.contentType], "cache-control" => ["no-cache"]}))
 
 fn api(store: Store, entropy: Int, request: HttpRequest, segments: List<String>) -> Reply
     ? "The API has exactly one collection."
@@ -421,3 +436,13 @@ verify hexValue
 verify finish
     finish([]) => Result.Ok("")
     finish([65, 66]) => Result.Ok("AB")
+
+verify staticReply
+    statusOf(staticReply(Web.Store.empty("l", "g"), [])) => 404
+    statusOf(staticReply(Web.Store.empty("l", "g"), ["avgo.css"])) => 404
+    statusOf(staticReply(Web.Store.withAsset(Web.Store.empty("l", "g"), "avgo.css", "body {}", "text/css"), ["avgo.css"])) => 200
+    statusOf(staticReply(Web.Store.withAsset(Web.Store.empty("l", "g"), "avgo.css", "body {}", "text/css"), ["..", "aver.toml"])) => 404
+
+verify served
+    statusOf(served(Web.Store.empty("l", "g"), Option.None)) => 404
+    served(Web.Store.empty("l", "g"), Option.Some(Web.Store.Asset(body = "b", contentType = "text/css"))).response.body => "b"

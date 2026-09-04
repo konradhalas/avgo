@@ -68,6 +68,72 @@
 
   let token = localStorage.getItem(storageKey) || '';
   let state = null;
+  let lastMoves = null;
+  let lastPasses = null;
+
+  // The stone sound is synthesised rather than loaded, so the server still has
+  // only two things to serve and no audio file has to travel with the page.
+  let audio = null;
+
+  function unlockAudio() {
+    try {
+      if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+      if (audio.state === 'suspended') audio.resume();
+    } catch (unsupported) {
+      audio = null;
+    }
+  }
+
+  // Browsers keep an audio context suspended until the page has been touched,
+  // so the first gesture — clicking the board, joining — is what enables sound.
+  document.addEventListener('pointerdown', unlockAudio);
+  document.addEventListener('keydown', unlockAudio);
+
+  function playStone() {
+    if (!audio || audio.state !== 'running') return;
+    const now = audio.currentTime;
+
+    // The clack: a short burst of noise, band-passed to sound like slate on wood.
+    const samples = Math.floor(audio.sampleRate * 0.05);
+    const buffer = audio.createBuffer(1, samples, audio.sampleRate);
+    const channel = buffer.getChannelData(0);
+    for (let i = 0; i < samples; i++) {
+      channel[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / samples, 6);
+    }
+    const noise = audio.createBufferSource();
+    noise.buffer = buffer;
+    const band = audio.createBiquadFilter();
+    band.type = 'bandpass';
+    band.frequency.value = 1900;
+    band.Q.value = 0.9;
+    const noiseGain = audio.createGain();
+    noiseGain.gain.setValueAtTime(0.35, now);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+    noise.connect(band).connect(noiseGain).connect(audio.destination);
+    noise.start(now);
+
+    // The body underneath it, so the click has some wood in it.
+    const thock = audio.createOscillator();
+    thock.type = 'triangle';
+    thock.frequency.setValueAtTime(340, now);
+    thock.frequency.exponentialRampToValueAtTime(120, now + 0.05);
+    const thockGain = audio.createGain();
+    thockGain.gain.setValueAtTime(0.18, now);
+    thockGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+    thock.connect(thockGain).connect(audio.destination);
+    thock.start(now);
+    thock.stop(now + 0.09);
+  }
+
+  function soundMoves() {
+    // Both players' stones arrive the same way: the move count went up. A pass
+    // also advances that count, so it is told apart by its own counter rising.
+    if (lastMoves !== null && state.moves > lastMoves && state.passes <= lastPasses) {
+      playStone();
+    }
+    lastMoves = state.moves;
+    lastPasses = state.passes;
+  }
 
   const headers = () => (token ? { 'x-player-token': token } : {});
   const colorName = (n) => (n === 1 ? 'Black' : n === 2 ? 'White' : 'nobody');
@@ -119,6 +185,7 @@
   function render() {
     draw();
     if (!state) return;
+    soundMoves();
 
     const you = state.you;
     const yourTurn = state.status === 'playing' && you !== 0 && you === state.turn;

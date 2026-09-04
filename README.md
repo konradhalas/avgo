@@ -15,7 +15,7 @@ lives in memory only — restarting the server forgets them all.
 
 <p align="center">
   <img src="docs/screenshot.jpg" width="600"
-       alt="The board on the left, players, controls and chat in a column on the right">
+       alt="Konrad and Szymon five moves into a game, chatting beside the board">
 </p>
 
 ## Run it
